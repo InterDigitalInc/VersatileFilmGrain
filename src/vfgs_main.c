@@ -317,6 +317,21 @@ static int read_cfg(const char* filename)
 	return 0;
 }
 
+static void apply_gain(unsigned gain)
+{
+	if (gain==100)
+		return;
+
+	for(;gain>100; gain/=2)
+		sei.log2_scale_factor --;
+	for(;gain && gain<50; gain*=2)
+		sei.log2_scale_factor ++;
+
+	for (int c=0; c<3; c++)
+		for (int i=0; sei.comp_model_present_flag[c] && i<sei.num_intensity_intervals[c]; i++)
+			sei.comp_model_value[c][i][0] = (int16)((int)sei.comp_model_value[c][i][0] * gain / 100);
+}
+
 static int help(const char* name)
 {
 	printf("Usage: %s [options] <input.yuv> <output.yuv>\n\n", name);
@@ -327,6 +342,7 @@ static int help(const char* name)
 	printf("   -n,--frames   <value>     Number of frames to process (0=all) [%d]\n", frames);
 	printf("   -s,--seek     <value>     Picture start index within input file [%d]\n", seek);
 	printf("   -c,--cfg      <filename>  Read film grain configuration file\n");
+	printf("   -g,--gain     <value>     Apply a global scale (in percent) to grain strength\n");
 	printf("   --help                    Display this page\n\n");
 	return 0;
 }
@@ -356,6 +372,7 @@ int main(int argc, const char **argv)
 	int i;
 	int err=0;
 	yuv frame;
+	unsigned gain = 100;
 
 	// Parse parameters
 	for (i=1; i<argc && !err; i++)
@@ -368,6 +385,7 @@ int main(int argc, const char **argv)
 		else if (!strcasecmp(param, "-n") || !strcasecmp(param, "--frames"))      { if (i+1 < argc) frames = atoi(argv[++i]); else err = 1; }
 		else if (!strcasecmp(param, "-s") || !strcasecmp(param, "--seek"))        { if (i+1 < argc) seek   = atoi(argv[++i]); else err = 1; }
 		else if (!strcasecmp(param, "-c") || !strcasecmp(param, "--cfg"))         { if (i+1 < argc) err = read_cfg(argv[++i]); else err = 1; }
+		else if (!strcasecmp(param, "-g") || !strcasecmp(param, "--gain"))        { if (i+1 < argc) gain   = atoi(argv[++i]); else err = 1; }
 		else if (!strcasecmp(param, "-h") || !strcasecmp(param, "--help"))        { help(argv[0]); return 1; }
 		else if (param[0]!='-')
 		{
@@ -408,6 +426,7 @@ int main(int argc, const char **argv)
 	vfgs_set_depth(depth);
 	vfgs_set_chroma_subsampling((format < YUV_444)?2:1, (format < YUV_422)?2:1);
 	adjust_chroma_cfg();
+	apply_gain(gain);
 
 	vfgs_init_sei(&sei);
 
