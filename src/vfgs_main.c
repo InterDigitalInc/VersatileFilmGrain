@@ -59,6 +59,7 @@ static int width = 1920;
 static int height = 1080;
 static int depth = 10;
 static int frames = 0;
+static int seek = 0;
 static int format = YUV_420;
 
 static fgs_sei sei = {
@@ -324,6 +325,7 @@ static int help(const char* name)
 	printf("   -b,--bitdepth <value>     Bit depth [%d]\n", depth);
 	printf("   -f,--format   <value>     Chroma format (420/422/444) [%s]\n", format_str(format));
 	printf("   -n,--frames   <value>     Number of frames to process (0=all) [%d]\n", frames);
+	printf("   -s,--seek     <value>     Picture start index within input file [%d]\n", seek);
 	printf("   -c,--cfg      <filename>  Read film grain configuration file\n");
 	printf("   --help                    Display this page\n\n");
 	return 0;
@@ -364,6 +366,7 @@ int main(int argc, const char **argv)
 		else if (!strcasecmp(param, "-b") || !strcasecmp(param, "--bitdepth"))    { if (i+1 < argc) depth  = atoi(argv[++i]); else err = 1; }
 		else if (!strcasecmp(param, "-f") || !strcasecmp(param, "--format"))      { if (i+1 < argc) format = read_format(argv[++i]); else err = 1; }
 		else if (!strcasecmp(param, "-n") || !strcasecmp(param, "--frames"))      { if (i+1 < argc) frames = atoi(argv[++i]); else err = 1; }
+		else if (!strcasecmp(param, "-s") || !strcasecmp(param, "--seek"))        { if (i+1 < argc) seek   = atoi(argv[++i]); else err = 1; }
 		else if (!strcasecmp(param, "-c") || !strcasecmp(param, "--cfg"))         { if (i+1 < argc) err = read_cfg(argv[++i]); else err = 1; }
 		else if (!strcasecmp(param, "-h") || !strcasecmp(param, "--help"))        { help(argv[0]); return 1; }
 		else if (param[0]!='-')
@@ -409,6 +412,7 @@ int main(int argc, const char **argv)
 	vfgs_init_sei(&sei);
 
 	yuv_alloc(width, height, depth, format, &frame);
+	yuv_skip(&frame, seek, fsrc);
 
 	// Process frames
 	for (int n = 0; ((frames == 0) || (n < frames)) && !ferror(fsrc); n++)

@@ -59,6 +59,7 @@ typedef struct yuv_s {
 int  yuv_alloc(int width, int height, int depth, int format, yuv* frame);
 void yuv_free(yuv* frame);
 void yuv_pad(yuv* frame);
+int  yuv_skip(yuv* frame, int n, FILE* file);
 int  yuv_read(yuv* frame, FILE* file);
 int  yuv_write(yuv* frame, FILE* file);
 

@@ -93,6 +93,18 @@ void yuv_free(yuv* frame)
 	frame->V = NULL;
 }
 
+int yuv_skip(yuv* frame, int n, FILE* file)
+{
+	int size;
+	int sz = (frame->depth == 8) ? 1 : 2;
+	int err = 0;
+
+	size = frame->width * frame->height * sz;
+	size += frame->cwidth * frame->cheight * 2 * sz;
+
+	return fseeko64(file, (long long)size * n, SEEK_CUR); // TODO: use _fseeki64 in Visual C++ (macro definition)
+}
+
 static void yuv_pad_comp(void* buffer, int width, int height, int stride, int walign, int halign, int depth)
 {
 	uint8*  buf8  = (uint8* )buffer;
