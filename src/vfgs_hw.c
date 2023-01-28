@@ -62,10 +62,17 @@ static uint8 C_max = 255;
 static int csubx = 2;
 static int csuby = 2;
 
-
 // Processing pipeline (needs only 2 registers for each color actually, for horizontal deblocking)
 static int16 grain[3][32]; // 9 bit needed because of overlap (has norm > 1)
 static uint8 scale[3][32];
+
+// Line buffers (software implementation)
+static uint8 offset_x[3][256]; //
+static uint8 offset_y[3][256]; // max. 4K image width
+static int8  sign[3][256];     //
+static int8  grain_buf[18][4096]; // TODO: cache-aligned alloc
+static int8  over_buf[2][4096];   // TODO: cache-aligned alloc
+static uint8 scale_buf[18][4096]; // last 2 lines never read
 
 /** Pseudo-random number generator */
 static uint32 prng(uint32 x)
@@ -306,6 +313,115 @@ void vfgs_add_grain_line(void* Y, void* U, void* V, int y, int width)
 		rnd = prng(rnd);
 		rnd_up = prng(rnd_up); // upper block (overlapping)
 	}
+}
+
+void vfgs_add_grain_stripe(void* Y, void* U, void* V, unsigned y, unsigned width, unsigned height, unsigned stride)
+{
+	unsigned x, i;
+	uint8 *I8;
+	uint16 *I16;
+	int overlap=0;
+
+	// TODO could assert(height%16) if YUV memory is padded properly
+	assert(width>128 && width<=4096 && width<=stride);
+	assert((stride & 0x0f) == 0 && stride<=4096);
+	assert((y & 0x0f) == 0);
+	assert(bs == 0 || bs == 2);
+	assert(scale_shift + bs >= 8 && scale_shift + bs <= 13);
+	// TODO: assert subx, suby, Y/C min/max, max pLUT values, etc
+
+	// Generate random offsets
+	for (x=0; x<width; x+=16)
+	{
+		int s[3];
+		get_offset_y(rnd, &s[0], &offset_x[0][x/16], &offset_y[0][x/16]);
+		get_offset_u(rnd, &s[1], &offset_x[1][x/16], &offset_y[1][x/16]);
+		get_offset_v(rnd, &s[2], &offset_x[2][x/16], &offset_y[2][x/16]);
+		rnd = prng(rnd);
+		sign[0][x/16] = s[0];
+		sign[1][x/16] = s[1];
+		sign[2][x/16] = s[2];
+	}
+
+	// Compute stripe height (including overlap for next stripe)
+	overlap = (y > 0);
+	height = min(18, height-y);
+
+	// Y: get grain & scale
+	I8 = (uint8*)Y;
+	I16 = (uint16*)Y;
+	for (y=0; y<height; y++)
+	{
+		for (x=0; x<width; x+=16)
+		{
+			int    s = sign[0][x/16];
+			uint8 ox = offset_x[0][x/16];
+			uint8 oy = offset_y[0][x/16];
+			for (i=0; i<16; i++) // may overflow past right image border but no problem: allocated space is multiple of 16
+			{
+				uint8 intensity = bs ? I16[x+i] >> bs : I8[x+i];
+				uint8 pi = pLUT[0][intensity] >> 4; // pattern index (integer part) / TODO: try also with zero-shift
+				// TODO: assert(pi < VFGS_MAX_PATTERNS); // out of loop ?
+				uint8 P  = pattern[0][pi][oy + y][ox + i] * s; // We could consider just XORing the sign bit
+				grain_buf[y][x+i] = P;
+				scale_buf[y][x+i] = sLUT[0][intensity];
+			}
+		}
+		I8  += stride;
+		I16 += stride;
+	}
+
+	// Y: vertical overlap (merge lines over_buf with 0 & 1, then copy 16 & 17 to over_buf)
+	// problem: need to store 9-bits now ? or just clip ?
+	for (y=0; y<2 && overlap; y++)
+	{
+		uint8 oc1 = y ? 24 : 12; // current
+		uint8 oc2 = y ? 12 : 24; // previous
+		for (x=0; x<width; x++)
+		{
+			int16 g = round(oc1*grain_buf[y][x+i] + oc2*over_buf[y][x+i], 5);
+			grain_buf[y][x+i] = max(-127, min(+127, g));
+			over_buf[y][x+i] = grain_buf[y+16][x+i];
+		}
+	}
+
+	// Y: horizontal deblock
+	// problem: need to store 9-bits now ? or just clip ?
+	// TODO: set grain_buf[y][width] to zero if width == K*16 +1 (to avoid filtering garbage)
+	for (y=0; y<16; y++)
+		for (x=16; x<width; x+=16)
+		{
+			int16 l1, l0, r0, r1;
+			l1 = grain_buf[y][x -2];
+			l0 = grain_buf[y][x -1];
+			r0 = grain_buf[y][x +0];
+			r1 = grain_buf[y][x +1];
+			l1 = round(l1 + 3*l0 + r0, 2); // left
+			r1 = round(l0 + 3*r0 + r1, 2); // right
+			grain_buf[y][x -1] = max(-127, min(+127, l1));
+			grain_buf[y][x +0] = max(-127, min(+127, r1));
+		}
+
+	// Y: scale & merge
+	height = min(16, height);
+	I8 = (uint8*)Y;
+	I16 = (uint16*)Y;
+	for (y=0; y<height; y++)
+	{
+		for (x=0; x<width; x++)
+		{
+			int32 g = round(scale_buf[y][x] * (int16)grain_buf[y][x], scale_shift);
+			if (bs)
+				I16[x] = max(Y_min<<bs, min(Y_max<<bs, I16[x] + g));
+			else
+				I8[x] = max(Y_min, min(Y_max, I8[x] + g));
+		}
+		I8  += stride;
+		I16 += stride;
+	}
+
+	// U
+	// V
 }
 
 void vfgs_set_luma_pattern(int index, int8* P)

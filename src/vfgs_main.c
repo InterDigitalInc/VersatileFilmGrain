@@ -337,6 +337,7 @@ static void vfgs_add_grain(yuv* frame)
 
 	assert(depth == frame->depth);
 
+#if 0
 	for (int y=0; y<frame->height; y++)
 	{
 		vfgs_add_grain_line(Y, U, V, y, frame->width);
@@ -347,6 +348,23 @@ static void vfgs_add_grain(yuv* frame)
 			V += frame->cstride * (depth > 8 ? 2 : 1);
 		}
 	}
+#else
+	for (int y=0; y<frame->height; y+=16)
+	{
+		vfgs_add_grain_stripe(Y, U, V, y, frame->width, frame->height, frame->stride);
+		Y += 16*frame->stride * (depth > 8 ? 2 : 1);
+		if (frame->height == frame->cheight)
+		{
+			U += 16*frame->cstride * (depth > 8 ? 2 : 1);
+			V += 16*frame->cstride * (depth > 8 ? 2 : 1);
+		}
+		else
+		{
+			U += 8*frame->cstride * (depth > 8 ? 2 : 1);
+			V += 8*frame->cstride * (depth > 8 ? 2 : 1);
+		}
+	}
+#endif
 }
 
 int main(int argc, const char **argv)
