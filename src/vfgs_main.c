@@ -253,6 +253,8 @@ static int read_cfg(const char* filename)
 
 	while (fgets(line, sizeof(line), cfg))
 	{
+		if (line[0] == '#') // remove comments (special case for 1st character)
+			continue;
 		s = strtok(line, "#"); // remove comments
 		while (isblank(*s)) // skip leading whitespace
 			s++;

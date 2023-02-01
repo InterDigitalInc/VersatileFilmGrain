@@ -513,7 +513,7 @@ void vfgs_init_sei(fgs_sei* cfg)
 					// to enable meaningful pattern interpolation
 					for (i=np; i>0; i--)
 					{
-						if (intensities[i-1] > id)
+						if (intensities[i-1] > a)
 						{
 							intensities[i] = intensities[i-1];
 							patterns[i] = patterns[i-1];
