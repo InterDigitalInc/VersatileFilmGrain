@@ -56,9 +56,11 @@ void vfgs_set_pattern_lut(int c, uint8 lut[]);
 void vfgs_set_seed(uint32 seed);
 void vfgs_set_scale_shift(int shift);
 void vfgs_set_depth(int depth);
+void vfgs_set_legal_range(int legal);
 void vfgs_set_chroma_subsampling(int subx, int suby);
 
 void vfgs_add_grain_line(void* Y, void* U, void* V, int y, int width);
+void vfgs_add_grain_stripe(void* Y, void* U, void* V, unsigned y, unsigned width, unsigned height, unsigned stride);
 
 #endif  // _VFGS_HW_H_
 

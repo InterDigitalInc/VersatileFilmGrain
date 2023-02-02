@@ -115,6 +115,24 @@ static fgs_sei sei = {
 	}
 };
 
+static fgs_metadata mtdt = {
+	.num_y_points = 0,
+	// no other default values (default mode is SEI)
+};
+
+static int read_array_i16(int16* x, char* s)
+{
+	while (isdigit(*s) || *s=='-' || *s=='+')
+	{
+		*x++ = atoi(s);
+		while (isdigit(*s) || *s=='-' || *s=='+')
+			s++;
+		while (isblank(*s))
+			s++;
+	}
+	return 0;
+}
+
 static int read_array_u8(uint8* x, char* s)
 {
 	while (isdigit(*s))
@@ -200,7 +218,7 @@ static int adjust_chroma_cfg()
 	return 0;
 }
 
-static int check_cfg()
+static int check_cfg_sei()
 {
 	// Unsupported features
 	CHECK(format == YUV_420 || (!sei.comp_model_present_flag[1] && !sei.comp_model_present_flag[2]), "color grain currently not supported on yuv422 and yuv444 formats");
@@ -235,6 +253,45 @@ static int check_cfg()
 	}
 
 	return 0;
+}
+
+static int check_cfg_mtdt()
+{
+	int i, val;
+
+	// Unsupported features
+	CHECK(format == YUV_420 || (!mtdt.num_cb_points && !mtdt.num_cr_points), "color grain currently not supported on yuv422 and yuv444 formats");
+
+	// Check point_y_values are in increasing order
+	for (i=1, val=mtdt.point_y_values[0]; i < mtdt.num_y_points; i++)
+	{
+		CHECK(mtdt.point_y_values[i] > val, "AOMPointYValues shall be in increasing order"); 
+		val = mtdt.point_y_values[i];
+	}
+
+	// Check point_cb_values are in increasing order
+	for (i=1, val=mtdt.point_cb_values[0]; i < mtdt.num_cb_points; i++)
+	{
+		CHECK(mtdt.point_cb_values[i] > val, "AOMPointCbValues shall be in increasing order"); 
+		val = mtdt.point_cb_values[i];
+	}
+
+	// Check point_y_values are in increasing order
+	for (i=1, val=mtdt.point_cr_values[0]; i < mtdt.num_cr_points; i++)
+	{
+		CHECK(mtdt.point_cr_values[i] > val, "AOMPointCrValues shall be in increasing order"); 
+		val = mtdt.point_cr_values[i];
+	}
+
+	return 0;
+}
+
+static int check_cfg()
+{
+	if (mtdt.num_y_points)
+		return check_cfg_mtdt();
+	else
+		return check_cfg_sei();
 }
 
 static int read_cfg(const char* filename)
@@ -314,6 +371,34 @@ static int read_cfg(const char* filename)
 			}
 		}
 		else if (!strcasecmp(s, "fg_characteristics_persistence_flag"))     { break; /* stop at the end of the first FGS SEI */ }
+
+		// AOM
+		else if (!strcasecmp(s, "AOMGrainSeed"))             { mtdt.grain_seed = atoi(v); }
+		else if (!strcasecmp(s, "AOMNumYPoints"))            { mtdt.num_y_points = atoi(v); CHECK(mtdt.num_y_points <= 14, "AOMNumYPoints higher than 14"); }
+		else if (!strcasecmp(s, "AOMPointYValues"))          { read_array_u8(mtdt.point_y_values, v); }
+		else if (!strcasecmp(s, "AOMPointYScaling"))         { read_array_u8(mtdt.point_y_scaling, v); }
+		else if (!strcasecmp(s, "AOMChromaScalingFromLuma")) { mtdt.chroma_scaling_from_luma = atoi(v); }
+		else if (!strcasecmp(s, "AOMNumCbPoints"))           { mtdt.num_cb_points = atoi(v); CHECK(mtdt.num_cb_points <= 10, "AOMNumCbPoints higher than 10"); }
+		else if (!strcasecmp(s, "AOMPointCbValues"))         { read_array_u8(mtdt.point_cb_values, v); }
+		else if (!strcasecmp(s, "AOMPointCbScaling"))        { read_array_u8(mtdt.point_cb_scaling, v); }
+		else if (!strcasecmp(s, "AOMNumCrPoints"))           { mtdt.num_cr_points = atoi(v); CHECK(mtdt.num_cr_points <= 10, "AOMNumCrPoints higher than 10"); }
+		else if (!strcasecmp(s, "AOMPointCrValues"))         { read_array_u8(mtdt.point_cr_values, v); }
+		else if (!strcasecmp(s, "AOMPointCrScaling"))        { read_array_u8(mtdt.point_cr_scaling, v); }
+		else if (!strcasecmp(s, "AOMGrainScaling"))          { mtdt.grain_scaling = atoi(v); CHECK(mtdt.grain_scaling >= 8 && mtdt.grain_scaling <= 11, "AOMGrainScaling out of 8..11 range"); }
+		else if (!strcasecmp(s, "AOMARCoeffLag"))            { mtdt.ar_coeff_lag = atoi(v); CHECK(mtdt.ar_coeff_lag <= 3, "AOMARCoeffLag higher than 3"); }
+		else if (!strcasecmp(s, "AOMARCoeffsY"))             { read_array_i16(mtdt.ar_coeffs_y, v); }
+		else if (!strcasecmp(s, "AOMARCoeffsCb"))            { read_array_i16(mtdt.ar_coeffs_cb, v); }
+		else if (!strcasecmp(s, "AOMARCoeffsCr"))            { read_array_i16(mtdt.ar_coeffs_cr, v); }
+		else if (!strcasecmp(s, "AOMARCoeffShift"))          { mtdt.ar_coeff_shift = atoi(v); CHECK(mtdt.ar_coeff_shift >= 6 && mtdt.ar_coeff_shift <= 9, "AOMARCoeffShift out of 6..9 range"); }
+		else if (!strcasecmp(s, "AOMGrainScaleShift"))       { mtdt.grain_scale_shift = atoi(v); CHECK(mtdt.grain_scale_shift <= 3, "AOMGrainScaleShift higher than 3"); }
+		else if (!strcasecmp(s, "AOMCbMult"))                { mtdt.cb_mult = atoi(v); }
+		else if (!strcasecmp(s, "AOMCbLumaMult"))            { mtdt.cb_luma_mult = atoi(v); }
+		else if (!strcasecmp(s, "AOMCbOffset"))              { mtdt.cb_offset = atoi(v); }
+		else if (!strcasecmp(s, "AOMCrMult"))                { mtdt.cr_mult = atoi(v); }
+		else if (!strcasecmp(s, "AOMCrLumaMult"))            { mtdt.cr_luma_mult = atoi(v); }
+		else if (!strcasecmp(s, "AOMCrOffset"))              { mtdt.cr_offset = atoi(v); }
+		else if (!strcasecmp(s, "AOMOverlapFlag"))           { mtdt.overlap_flag = atoi(v); }
+		else if (!strcasecmp(s, "AOMClipToRestrictedRange")) { mtdt.clip_to_restricted_range = atoi(v); }
 	}
 
 	return 0;
@@ -357,6 +442,7 @@ static void vfgs_add_grain(yuv* frame)
 
 	assert(depth == frame->depth);
 
+#if 0
 	for (int y=0; y<frame->height; y++)
 	{
 		vfgs_add_grain_line(Y, U, V, y, frame->width);
@@ -367,6 +453,23 @@ static void vfgs_add_grain(yuv* frame)
 			V += frame->cstride * (depth > 8 ? 2 : 1);
 		}
 	}
+#else
+	for (int y=0; y<frame->height; y+=16)
+	{
+		vfgs_add_grain_stripe(Y, U, V, y, frame->width, frame->height, frame->stride);
+		Y += 16*frame->stride * (depth > 8 ? 2 : 1);
+		if (frame->height == frame->cheight)
+		{
+			U += 16*frame->cstride * (depth > 8 ? 2 : 1);
+			V += 16*frame->cstride * (depth > 8 ? 2 : 1);
+		}
+		else
+		{
+			U += 8*frame->cstride * (depth > 8 ? 2 : 1);
+			V += 8*frame->cstride * (depth > 8 ? 2 : 1);
+		}
+	}
+#endif
 }
 
 int main(int argc, const char **argv)
@@ -430,7 +533,10 @@ int main(int argc, const char **argv)
 	adjust_chroma_cfg();
 	apply_gain(gain);
 
-	vfgs_init_sei(&sei);
+	if (mtdt.num_y_points)
+		vfgs_init_mtdt(&mtdt);
+	else
+		vfgs_init_sei(&sei);
 
 	yuv_alloc(width, height, depth, format, &frame);
 	yuv_skip(&frame, seek, fsrc);
