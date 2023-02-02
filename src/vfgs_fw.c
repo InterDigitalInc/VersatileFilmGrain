@@ -415,6 +415,7 @@ void vfgs_make_ar_pattern(const int8* buf0, int8 buf[], int8 P[], int size, cons
 	int g;
 	int subx, suby, width, height;
 	uint32 rnd = Seed_LUT[0]; // pull out (different for luma/chroma)
+	int cx = 0; // cross-compoenent coefficient
 
 	memset(coef, 0, sizeof(coef));
 	subx = suby = (size == 32) ? 2 : 1;
@@ -432,6 +433,24 @@ void vfgs_make_ar_pattern(const int8* buf0, int8 buf[], int8 P[], int size, cons
 			coef[3][1] = ar_coef[5]; // left-left
 			coef[1][3] = ar_coef[5]; // top-top
 			L = 2;
+			break;
+
+		case 5:
+			cx = ar_coef[4];
+		case 4:
+			L = 1;
+			break;
+
+		case 13:
+			cx = ar_coef[12];
+		case 12:
+			L = 2;
+			break;
+
+		case 25:
+			cx = ar_coef[24];
+		case 24:
+			L = 3;
 			break;
 
 		default:
@@ -454,6 +473,17 @@ void vfgs_make_ar_pattern(const int8* buf0, int8 buf[], int8 P[], int size, cons
 					for(i=-3; i<=3 && (i<0 || j<0); i++)
 						g += (int)coef[3+j][3+i] * buf[width*(y+j) + x+i];
 
+				// Add cross-component stuff
+				if (cx && buf0!=NULL)
+				{
+					i = (x-3)*subx + 3; // TODO: for SEI, take previous instead of luma ? --> not same size/subx/suby !
+					j = (y-3)*suby + 3;
+					int Z = buf0[width*subx*j + i];
+					if (subx>1) Z += buf0[width*subx*j + i+1];
+					if (suby>1) Z += buf0[width*subx*(j+1) + i] + buf0[width*subx*(j+1) + i+1];
+					g += cx * round(Z,subx+suby-2);
+				}
+				
 				g = round(g, scale);
 			}
 
@@ -607,5 +637,69 @@ void vfgs_init_sei(fgs_sei* cfg)
 	}
 
 	vfgs_set_scale_shift(cfg->log2_scale_factor - (cfg->model_id ? 1 : 0)); // -1 for grain shift in pattern generation (see above)
+}
+
+/* ****************************************************************************/
+
+/** Fill LUT from piecewise linear function */
+void vfgs_make_lut_piecewise_linear(uint8 lut[], const uint8 in[], const uint8 out[], int n)
+{
+	memset(lut, 0, 256);
+	for (int k=1; k<n; k++)
+	{
+		int din  = in[k] - in[k-1];
+		int dout = (int)out[k] - out[k-1];
+		assert(din > 0);
+		for (int i=0; i<=din; i++)
+			lut[in[k-1] + i] = out[k-1] + (dout * i + din/2) / din;
+	}
+}
+
+/** Initialize "hardware" interface from ITU-T T.35 AOM-registered metadata */
+void vfgs_init_mtdt(fgs_metadata* cfg)
+{
+	uint8 lut[256];
+	int8 P[64*64];
+	int8 Lbuf[73*82];
+	int8 Cbuf[38*44];
+	int n;
+
+	// set seed
+	vfgs_set_seed(cfg->grain_seed | ((uint32)cfg->grain_seed << 16));
+
+	// make luts
+	vfgs_make_lut_piecewise_linear(lut, cfg->point_y_values, cfg->point_y_scaling, cfg->num_y_points);
+	vfgs_set_scale_lut(0, lut);
+	if (!cfg->chroma_scaling_from_luma)
+		vfgs_make_lut_piecewise_linear(lut, cfg->point_cb_values, cfg->point_cb_scaling, cfg->num_cb_points);
+	vfgs_set_scale_lut(1, lut);
+	if (!cfg->chroma_scaling_from_luma)
+		vfgs_make_lut_piecewise_linear(lut, cfg->point_cr_values, cfg->point_cr_scaling, cfg->num_cr_points);
+	vfgs_set_scale_lut(2, lut);
+
+	// make AR patterns
+	// note on grain_scale_shift:
+	// - AOM spec uses grain_scale_shift+4 but has gaussian table with sigma = 512
+	// - since our table has sigma = 63, we just remove 3 shifts, which makes grain_scale_shift+1                          
+	n = 2 * cfg->ar_coeff_lag * (cfg->ar_coeff_lag + 1);
+	vfgs_make_ar_pattern(NULL, Lbuf, P, 64, cfg->ar_coeffs_y, n, cfg->grain_scale_shift+1, cfg->ar_coeff_shift, Seed_LUT[0]);
+	vfgs_set_luma_pattern(0, P);
+	memset(lut, 0, sizeof(lut));
+	vfgs_set_pattern_lut(0, lut);
+
+	vfgs_make_ar_pattern(Lbuf, Cbuf, P, 32, cfg->ar_coeffs_cb, n, cfg->grain_scale_shift+1, cfg->ar_coeff_shift, Seed_LUT[1]);
+	vfgs_set_chroma_pattern(0, P);
+	vfgs_set_pattern_lut(1, lut);
+
+	vfgs_make_ar_pattern(Lbuf, Cbuf, P, 32, cfg->ar_coeffs_cr, n, cfg->grain_scale_shift+1, cfg->ar_coeff_shift, Seed_LUT[2]);
+	vfgs_set_chroma_pattern(1, P);
+	memset(lut, 1, sizeof(lut));
+	vfgs_set_pattern_lut(2, lut);
+
+	vfgs_set_scale_shift(cfg->grain_scaling - 6);
+	vfgs_set_legal_range(cfg->clip_to_restricted_range);
+
+	// TODO: cb_mult/luma_mult/offset + same for cr
+	// TODO: overlap_flag (ignore ?)
 }
 

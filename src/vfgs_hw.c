@@ -472,6 +472,24 @@ void vfgs_set_depth(int depth)
 	bs = depth - 8;
 }
 
+void vfgs_set_legal_range(int legal)
+{
+	if (legal)
+	{
+		Y_min = 16;
+		Y_max = 235;
+		C_min = 16;
+		C_max = 240;
+	}
+	else
+	{
+		Y_min = 0;
+		Y_max = 255;
+		C_min = 0;
+		C_max = 255;
+	}
+}
+
 void vfgs_set_chroma_subsampling(int subx, int suby)
 {
 	assert(subx==1 || subx==2);
