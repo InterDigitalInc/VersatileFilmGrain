@@ -3,7 +3,7 @@
  * and contributor rights, including patent rights, and no such rights are
  * granted under this license.
  *
- * Copyright (c) 2022, InterDigital
+ * Copyright (c) 2022-2023, InterDigital
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -97,7 +97,6 @@ int yuv_skip(yuv* frame, int n, FILE* file)
 {
 	int size;
 	int sz = (frame->depth == 8) ? 1 : 2;
-	int err = 0;
 
 	size = frame->width * frame->height * sz;
 	size += frame->cwidth * frame->cheight * 2 * sz;
@@ -111,11 +110,10 @@ static void yuv_pad_comp(void* buffer, int width, int height, int stride, int wa
 	uint16* buf16 = (uint16*)buffer;
 	int width2 = (width & (walign-1)) ? (width + walign) & ~(walign-1) : width;
 	int height2 = (height & (halign-1)) ? (height + halign) & ~(halign-1) : height;
-	int sz = (depth == 8) ? 1 : 2;
 	int i, k;
 
 	assert(walign==ALIGN_SIZE || walign==ALIGN_SIZE/2 || halign==ALIGN_SIZE || halign==ALIGN_SIZE/2);
-	assert(((intptr_t)buffer & (ALIGN_MEM*sz-1)) == 0);
+	assert(((intptr_t)buffer & ((depth == 8) ? ALIGN_MEM-1 : 2*ALIGN_MEM-1)) == 0);
 	assert((stride & (ALIGN_MEM-1)) == 0);
 
 	if (depth==8)
@@ -214,3 +212,46 @@ int yuv_write(yuv* frame, FILE* file)
 	return err;
 }
 
+void yuv_to_8bit(yuv* dst, const yuv* src)
+{
+	uint8* buf8;
+	uint16* buf16;
+	int i, j;
+
+	assert(dst->depth == 8 && src->depth == 10);
+	assert(dst->width == src->width && dst->height == src->height);
+	assert(dst->cwidth == src->cwidth && dst->cheight == src->cheight);
+
+	buf16 = src->Y;
+	buf8  = dst->Y;
+	for (j=0; j<src->height; j++)
+	{
+		for (i=0; i<src->width; i++)
+			buf8[i] = (uint8)((buf16[i] + 2) >> 2);
+
+		buf16 += src->stride;
+		buf8  += dst->stride;
+	}
+
+	buf16 = src->U;
+	buf8  = dst->U;
+	for (j=0; j<src->cheight; j++)
+	{
+		for (i=0; i<src->cwidth; i++)
+			buf8[i] = (uint8)((buf16[i] + 2) >> 2);
+
+		buf16 += src->cstride;
+		buf8  += dst->cstride;
+	}
+
+	buf16 = src->V;
+	buf8  = dst->V;
+	for (j=0; j<src->cheight; j++)
+	{
+		for (i=0; i<src->cwidth; i++)
+			buf8[i] = (uint8)((buf16[i] + 2) >> 2);
+
+		buf16 += src->cstride;
+		buf8  += dst->cstride;
+	}
+}

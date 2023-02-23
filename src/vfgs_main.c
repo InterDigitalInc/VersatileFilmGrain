@@ -3,7 +3,7 @@
  * and contributor rights, including patent rights, and no such rights are
  * granted under this license.
  *
- * Copyright (c) 2022, InterDigital
+ * Copyright (c) 2022-2023, InterDigital
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -58,6 +58,7 @@ static FILE* fdst = NULL;
 static int width = 1920;
 static int height = 1080;
 static int depth = 10;
+static int odepth = 0;
 static int frames = 0;
 static int seek = 0;
 static int format = YUV_420;
@@ -339,7 +340,8 @@ static int help(const char* name)
 	printf("Usage: %s [options] <input.yuv> <output.yuv>\n\n", name);
 	printf("   -w,--width    <value>     Picture width [%d]\n", width);
 	printf("   -h,--height   <value>     Picture height [%d]\n", height);
-	printf("   -b,--bitdepth <value>     Bit depth [%d]\n", depth);
+	printf("   -b,--bitdepth <value>     Input bit depth [%d]\n", depth);
+	printf("      --outdepth <value>     Output bit depth (<= input depth) [same as input]\n");
 	printf("   -f,--format   <value>     Chroma format (420/422/444) [%s]\n", format_str(format));
 	printf("   -n,--frames   <value>     Number of frames to process (0=all) [%d]\n", frames);
 	printf("   -s,--seek     <value>     Picture start index within input file [%d]\n", seek);
@@ -373,7 +375,7 @@ int main(int argc, const char **argv)
 {
 	int i;
 	int err=0;
-	yuv frame;
+	yuv frame, oframe;
 	unsigned gain = 100;
 
 	// Parse parameters
@@ -383,6 +385,7 @@ int main(int argc, const char **argv)
 		if      (!strcasecmp(param, "-w") || !strcasecmp(param, "--width"))       { if (i+1 < argc) width  = atoi(argv[++i]); else err = 1; }
 		else if (!strcasecmp(param, "-h") || !strcasecmp(param, "--height"))      { if (i+1 < argc) height = atoi(argv[++i]); else err = 1; }
 		else if (!strcasecmp(param, "-b") || !strcasecmp(param, "--bitdepth"))    { if (i+1 < argc) depth  = atoi(argv[++i]); else err = 1; }
+		else if (                            !strcasecmp(param, "--outdepth"))    { if (i+1 < argc) odepth = atoi(argv[++i]); else err = 1; }
 		else if (!strcasecmp(param, "-f") || !strcasecmp(param, "--format"))      { if (i+1 < argc) format = read_format(argv[++i]); else err = 1; }
 		else if (!strcasecmp(param, "-n") || !strcasecmp(param, "--frames"))      { if (i+1 < argc) frames = atoi(argv[++i]); else err = 1; }
 		else if (!strcasecmp(param, "-s") || !strcasecmp(param, "--seek"))        { if (i+1 < argc) seek   = atoi(argv[++i]); else err = 1; }
@@ -410,6 +413,11 @@ int main(int argc, const char **argv)
 				}
 			}
 		}
+		else
+		{
+			printf("Unknown parameter %s\n", param);
+			err = 1;
+		}
 	}
 	if (!fsrc || !fdst || err)
 	{
@@ -420,8 +428,10 @@ int main(int argc, const char **argv)
 	{
 		return 1;
 	}
+	odepth = odepth ? odepth : depth;
 
 	assert(depth==8 || depth==10);
+	assert((odepth==8 || odepth==10) && (odepth <= depth));
 	assert(width>=128);
 	assert(height>=128);
 
@@ -433,6 +443,11 @@ int main(int argc, const char **argv)
 	vfgs_init_sei(&sei);
 
 	yuv_alloc(width, height, depth, format, &frame);
+	if (odepth < depth)
+		yuv_alloc(width, height, odepth, format, &oframe);
+	else
+		oframe = frame;
+
 	yuv_skip(&frame, seek, fsrc);
 
 	// Process frames
@@ -443,10 +458,14 @@ int main(int argc, const char **argv)
 			break;
 		//yuv_pad(&frame);
 		vfgs_add_grain(&frame);
-		yuv_write(&frame, fdst);
+		if (odepth < depth)
+			yuv_to_8bit(&oframe, &frame);
+		yuv_write(&oframe, fdst);
 	}
 
 	yuv_free(&frame);
+	if (odepth < depth)
+		yuv_free(&oframe);
 
 	return 0;
 }

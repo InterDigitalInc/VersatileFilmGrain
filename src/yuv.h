@@ -3,7 +3,7 @@
  * and contributor rights, including patent rights, and no such rights are
  * granted under this license.
  *
- * Copyright (c) 2022, InterDigital
+ * Copyright (c) 2022-2023, InterDigital
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -62,6 +62,7 @@ void yuv_pad(yuv* frame);
 int  yuv_skip(yuv* frame, int n, FILE* file);
 int  yuv_read(yuv* frame, FILE* file);
 int  yuv_write(yuv* frame, FILE* file);
+void yuv_to_8bit(yuv* dst, const yuv* src);
 
 #endif  // _YUV_H_
 
