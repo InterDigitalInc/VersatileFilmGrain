@@ -407,14 +407,14 @@ static void vfgs_make_sei_ff_pattern32(int8 B[][32], int fh, int fv)
 	idct2_32(B);
 }
 
-void vfgs_make_ar_pattern(const int8* buf0, int8 buf[], int8 P[], int size, const int16 ar_coef[], int nb_coef, int shift, int scale, uint32 seed)
+static void vfgs_make_ar_pattern(int8 buf[], int8 P[], int size, const int16 ar_coef[], int nb_coef, int shift, int scale, uint32 seed)
 {
 	int16 coef[4][7];
 	int L = 0;
 	int x, y, i, j, k;
 	int g;
 	int subx, suby, width, height;
-	uint32 rnd = Seed_LUT[0]; // pull out (different for luma/chroma)
+	uint32 rnd = seed;
 
 	memset(coef, 0, sizeof(coef));
 	subx = suby = (size == 32) ? 2 : 1;
@@ -481,8 +481,9 @@ void vfgs_init_sei(fgs_sei* cfg)
 	uint8 plut[256];
 	uint8 intensities[VFGS_MAX_PATTERNS];
 	uint32 patterns[VFGS_MAX_PATTERNS];
-	int   np = 0; // number of patterns
-	int   a, b, c, i, k;
+	uint8 np = 0; // number of patterns
+	uint8 a, b, i;
+	int   c, k;
 
 	for (c=0; c<3; c++)
 	{
@@ -541,7 +542,7 @@ void vfgs_init_sei(fgs_sei* cfg)
 				if (c==0)
 				{
 					if (cfg->model_id)
-						vfgs_make_ar_pattern(NULL, Lbuf, P, 64, coef, 6, 1, cfg->log2_scale_factor, Seed_LUT[0]);
+						vfgs_make_ar_pattern(Lbuf, P, 64, coef, 6, 1, cfg->log2_scale_factor, Seed_LUT[0]);
 					else
 						vfgs_make_sei_ff_pattern64((int8 (*)[64])P, coef[1], coef[2]);
 
@@ -550,7 +551,7 @@ void vfgs_init_sei(fgs_sei* cfg)
 				else if (c==2)
 				{
 					if (cfg->model_id)
-						vfgs_make_ar_pattern(Lbuf, Cbuf, P, 32, coef, 6, 1, cfg->log2_scale_factor, Seed_LUT[1]);
+						vfgs_make_ar_pattern(Cbuf, P, 32, coef, 6, 1, cfg->log2_scale_factor, Seed_LUT[1]);
 					else
 						vfgs_make_sei_ff_pattern32((int8 (*)[32])P, coef[1], coef[2]);
 
@@ -575,7 +576,8 @@ void vfgs_init_sei(fgs_sei* cfg)
 						uint32 id = (c1 << 24) | (c3 << 16) | (c5 << 8) | c2;
 
 						for (i=0; i<VFGS_MAX_PATTERNS; i++)
-							if (patterns[i] == id) break;
+							if (patterns[i] == id)
+								break;
 						// Note: if not found, could try to find interpolation value
 
 						for (int l=a; l<=b; l++)

@@ -40,6 +40,7 @@
 
 #ifdef _MSC_VER
 #include <malloc.h>
+#define fseeko _fseeki64
 #else
 #include <mm_malloc.h>
 #endif
@@ -101,7 +102,7 @@ int yuv_skip(yuv* frame, int n, FILE* file)
 	size = frame->width * frame->height * sz;
 	size += frame->cwidth * frame->cheight * 2 * sz;
 
-	return fseeko64(file, (long long)size * n, SEEK_CUR); // TODO: use _fseeki64 in Visual C++ (macro definition)
+	return fseeko(file, (long long)size * n, SEEK_CUR);
 }
 
 static void yuv_pad_comp(void* buffer, int width, int height, int stride, int walign, int halign, int depth)

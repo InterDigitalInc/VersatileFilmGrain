@@ -93,44 +93,44 @@ static uint32 prng(uint32 x)
  * Note: to fully support cross-component correlation within patterns, we would
  * need to align luma/chroma offsets.
  */
-static void get_offset_y(uint32 rnd, int *s, uint8 *x, uint8 *y)
+static void get_offset_y(uint32 val, int *s, uint8 *x, uint8 *y)
 {
 	uint32 bf; // bit field
 
-	*s = ((rnd >> 31) & 1) ? -1 : 1;
+	*s = ((val >> 31) & 1) ? -1 : 1;
 
-	bf = (rnd >> 0) & 0x3ff;
+	bf = (val >> 0) & 0x3ff;
 	*x = ((bf * 13) >> 10) * 4; // 13 = 8 + 4 + 1 (two adders)
 
-	bf = (rnd >> 14) & 0x3ff;
+	bf = (val >> 14) & 0x3ff;
 	*y = ((bf * 12) >> 10) * 4; // 12 = 8 + 4 (one adder)
 	// Note: could shift 9 and * 2, to make a multiple of 2 and make use of all
 	// pattern samples (when using overlap).
 }
 
-static void get_offset_u(uint32 rnd, int *s, uint8 *x, uint8 *y)
+static void get_offset_u(uint32 val, int *s, uint8 *x, uint8 *y)
 {
 	uint32 bf; // bit field
 
-	*s = ((rnd >> 2) & 1) ? -1 : 1;
+	*s = ((val >> 2) & 1) ? -1 : 1;
 
-	bf = (rnd >> 10) & 0x3ff;
+	bf = (val >> 10) & 0x3ff;
 	*x = ((bf * 13) >> 10) * (4/csubx);
 
-	bf = ((rnd >> 24) & 0x0ff) | ((rnd << 8) & 0x300);
+	bf = ((val >> 24) & 0x0ff) | ((val << 8) & 0x300);
 	*y = ((bf * 12) >> 10) * (4/csuby);
 }
 
-static void get_offset_v(uint32 rnd, int *s, uint8 *x, uint8 *y)
+static void get_offset_v(uint32 val, int *s, uint8 *x, uint8 *y)
 {
 	uint32 bf; // bit field
 
-	*s = ((rnd >> 15) & 1) ? -1 : 1;
+	*s = ((val >> 15) & 1) ? -1 : 1;
 
-	bf = (rnd >> 20) & 0x3ff;
+	bf = (val >> 20) & 0x3ff;
 	*x = ((bf * 13) >> 10) * (4/csubx);
 
-	bf = (rnd >> 4) & 0x3ff;
+	bf = (val >> 4) & 0x3ff;
 	*y = ((bf * 12) >> 10) * (4/csuby);
 }
 

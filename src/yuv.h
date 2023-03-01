@@ -37,6 +37,7 @@
 #ifndef _YUV_H_
 #define _YUV_H_
 
+#define _FILE_OFFSET_BITS 64
 #include <stdio.h>
 
 #define YUV_420 0
