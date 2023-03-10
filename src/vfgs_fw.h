@@ -59,7 +59,37 @@ typedef struct fgs_sei_s {
 	int16 comp_model_value[3][256][SEI_MAX_MODEL_VALUES];
 } fgs_sei;
 
+typedef struct fgs_metadata_s {
+	uint16 grain_seed;
+	uint8 num_y_points; /* 0..14 */
+	uint8 point_y_values[14]; /* shall be in increasing order */
+	uint8 point_y_scaling[14];
+	uint8 chroma_scaling_from_luma;
+	uint8 num_cb_points; /* 0..10 */
+	uint8 point_cb_values[10];
+	uint8 point_cb_scaling[10];
+	uint8 num_cr_points; /* 0..10 */
+	uint8 point_cr_values[10];
+	uint8 point_cr_scaling[10];
+	uint8 grain_scaling; /* 8..11 () */
+	uint8 ar_coeff_lag; /* 0..3 */
+	int16 ar_coeffs_y[24];  /* 16-bit to match comp_model_value, but only 8-bit signed is used here */
+	int16 ar_coeffs_cb[25]; /* Last value is a luma injection coefficient */
+	int16 ar_coeffs_cr[25];
+	uint8 ar_coeff_shift; /* 6..9 (AR coefficients scale down) */
+	uint8 grain_scale_shift; /* 0..3 (Gaussian random numbers scale down) */
+	uint8  cb_mult;
+	uint8  cb_luma_mult;
+	uint16 cb_offset; /* 9-bit */
+	uint8  cr_mult;
+	uint8  cr_luma_mult;
+	uint16 cr_offset; /* 9-bit */
+	uint8 overlap_flag;
+	uint8 clip_to_restricted_range;
+} fgs_metadata;
+
 void vfgs_init_sei(fgs_sei* cfg);
+void vfgs_init_mtdt(fgs_metadata* cfg);
 
 #endif  // _VFGS_FW_H_
 
