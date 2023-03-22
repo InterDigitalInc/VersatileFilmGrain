@@ -501,7 +501,7 @@ static void vfgs_make_ar_pattern(const int8* buf0, int8 buf[], int8 P[], int siz
 			P[size*y+x] = buf[width*(3+6/suby+y) + (3+6/subx+x)];
 }
 
-/** Initialize "hardware" interface from FGS SEI parameters */
+/** Initialize "hardware" interface from FGC SEI message */
 void vfgs_init_sei(fgs_sei* cfg)
 {
 	int8 P[64*64];
@@ -658,7 +658,7 @@ void vfgs_make_lut_piecewise_linear(uint8 lut[], const uint8 in[], const uint8 o
 }
 
 /** Initialize "hardware" interface from ITU-T T.35 AOM-registered metadata */
-void vfgs_init_mtdt(fgs_metadata* cfg)
+void vfgs_init_afgs1(fgs_afgs1* cfg)
 {
 	uint8 lut[256];
 	int8 P[64*64];

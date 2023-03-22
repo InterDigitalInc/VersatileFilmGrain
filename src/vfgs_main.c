@@ -44,6 +44,7 @@
 
 #ifdef _MSC_VER
 #define strcasecmp _stricmp
+#define strncasecmp _strnicmp
 #else
 #define min(a,b) ((a)<(b)?(a):(b))
 #define max(a,b) ((a)>(b)?(a):(b))
@@ -116,7 +117,7 @@ static fgs_sei sei = {
 	}
 };
 
-static fgs_metadata mtdt = {
+static fgs_afgs1 afgs1 = {
 	.num_y_points = 0,
 	// no other default values (default mode is SEI)
 };
@@ -256,32 +257,32 @@ static int check_cfg_sei()
 	return 0;
 }
 
-static int check_cfg_mtdt()
+static int check_cfg_afgs1()
 {
 	int i, val;
 
 	// Unsupported features
-	CHECK(format == YUV_420 || (!mtdt.num_cb_points && !mtdt.num_cr_points), "color grain currently not supported on yuv422 and yuv444 formats");
+	CHECK(format == YUV_420 || (!afgs1.num_cb_points && !afgs1.num_cr_points), "color grain currently not supported on yuv422 and yuv444 formats");
 
 	// Check point_y_values are in increasing order
-	for (i=1, val=mtdt.point_y_values[0]; i < mtdt.num_y_points; i++)
+	for (i=1, val=afgs1.point_y_values[0]; i < afgs1.num_y_points; i++)
 	{
-		CHECK(mtdt.point_y_values[i] > val, "AOMPointYValues shall be in increasing order"); 
-		val = mtdt.point_y_values[i];
+		CHECK(afgs1.point_y_values[i] > val, "afgs1.point_y_values shall be in increasing order");
+		val = afgs1.point_y_values[i];
 	}
 
 	// Check point_cb_values are in increasing order
-	for (i=1, val=mtdt.point_cb_values[0]; i < mtdt.num_cb_points; i++)
+	for (i=1, val=afgs1.point_cb_values[0]; i < afgs1.num_cb_points; i++)
 	{
-		CHECK(mtdt.point_cb_values[i] > val, "AOMPointCbValues shall be in increasing order"); 
-		val = mtdt.point_cb_values[i];
+		CHECK(afgs1.point_cb_values[i] > val, "afgs1.point_cb_values shall be in increasing order");
+		val = afgs1.point_cb_values[i];
 	}
 
 	// Check point_y_values are in increasing order
-	for (i=1, val=mtdt.point_cr_values[0]; i < mtdt.num_cr_points; i++)
+	for (i=1, val=afgs1.point_cr_values[0]; i < afgs1.num_cr_points; i++)
 	{
-		CHECK(mtdt.point_cr_values[i] > val, "AOMPointCrValues shall be in increasing order"); 
-		val = mtdt.point_cr_values[i];
+		CHECK(afgs1.point_cr_values[i] > val, "afgs1.point_cr_values shall be in increasing order");
+		val = afgs1.point_cr_values[i];
 	}
 
 	return 0;
@@ -289,10 +290,138 @@ static int check_cfg_mtdt()
 
 static int check_cfg()
 {
-	if (mtdt.num_y_points)
-		return check_cfg_mtdt();
+	if (afgs1.num_y_points)
+		return check_cfg_afgs1();
 	else
 		return check_cfg_sei();
+}
+
+// Read AFGS1 parameters from "grain table" format as output by the grain analyzer in AOM reference software
+static int read_afgs1_tbl(FILE* cfg)
+{
+	char line[1024];
+	char *s;
+	const char* sep = " \t"; // separators (white space)
+	int ncoef;
+#   define AERR "AFGS1 table entry: "
+
+	// Header line
+	fgets(line, sizeof(line), cfg);
+	for (s = line; isblank(*s); s++); // skip whitespace
+	s = strtok(line, sep); CHECK(s && !strcmp(s,"E"), AERR "expecting header (E)");
+	s = strtok(NULL, sep); // ignore start time (applied immediately)
+	s = strtok(NULL, sep); // ignore end time (we never stop)
+	s = strtok(NULL, sep); // ignore apply_grain (we always apply)
+	s = strtok(NULL, sep); CHECK(s, AERR "missing grain_seed");
+	afgs1.grain_seed = atoi(s);
+	// ignore update_parameters (we always update)
+
+	// Parameters line
+	fgets(line, sizeof(line), cfg);
+	for (s = line; isblank(*s); s++); // skip whitespace
+	s = strtok(line, sep);             CHECK(s && !strcmp(s,"p"), AERR "expecting parameters (p)");
+	s = strtok(NULL, sep);             CHECK(s, AERR "missing ar_coeff_lag");
+	afgs1.ar_coeff_lag = atoi(s);      CHECK(afgs1.ar_coeff_lag <= 3, "ar_coeff_lag higher than 3");
+	s = strtok(NULL, sep);             CHECK(s, AERR "missing ar_coeff_shift");
+	afgs1.ar_coeff_shift = atoi(s);    CHECK(afgs1.ar_coeff_shift >= 6 && afgs1.ar_coeff_shift <= 9, "ar_coeff_shift out of 6..9 range");
+	s = strtok(NULL, sep);             CHECK(s, AERR "missing grain_scale_shift");
+	afgs1.grain_scale_shift = atoi(s); CHECK(afgs1.grain_scale_shift <= 3, "grain_scale_shift higher than 3");
+	s = strtok(NULL, sep);             CHECK(s, AERR "missing grain_scaling");
+	afgs1.grain_scaling = atoi(s);     CHECK(afgs1.grain_scaling >= 8 && afgs1.grain_scaling <= 11, "grain_scaling out of 8..11 range");
+	s = strtok(NULL, sep);             CHECK(s, AERR "missing chroma_scaling_from_luma");
+	afgs1.chroma_scaling_from_luma = atoi(s);
+	s = strtok(NULL, sep);             CHECK(s, AERR "missing overlap_flag");
+	afgs1.overlap_flag = atoi(s);
+	s = strtok(NULL, sep);             CHECK(s, AERR "missing cb_mult");
+	afgs1.cb_mult = atoi(s);
+	s = strtok(NULL, sep);             CHECK(s, AERR "missing cb_luma_mult");
+	afgs1.cb_luma_mult = atoi(s);
+	s = strtok(NULL, sep);             CHECK(s, AERR "missing cb_offset");
+	afgs1.cb_offset = atoi(s);
+	s = strtok(NULL, sep);             CHECK(s, AERR "missing cr_mult");
+	afgs1.cr_mult = atoi(s);
+	s = strtok(NULL, sep);             CHECK(s, AERR "missing cr_luma_mult");
+	afgs1.cr_luma_mult = atoi(s);
+	s = strtok(NULL, sep);             CHECK(s, AERR "missing cr_offset");
+	afgs1.cr_offset = atoi(s);
+
+	// Y scaling function line
+	fgets(line, sizeof(line), cfg);
+	for (s = line; isblank(*s); s++); // skip whitespace
+	s = strtok(line, sep);             CHECK(s && !strcmp(s,"sY"), AERR "expecting luma scaling function (sY)");
+	s = strtok(NULL, sep);             CHECK(s, AERR "missing num_y_points");
+	afgs1.num_y_points = atoi(s);      CHECK(afgs1.num_y_points <= 14, "num_y_points higher than 14");
+	for (int k=0; k<afgs1.num_y_points; k++)
+	{
+		s = strtok(NULL, sep);         CHECK(s, AERR "missing luma scaling point (value)");
+		afgs1.point_y_values[k] = atoi(s);
+		s = strtok(NULL, sep);         CHECK(s, AERR "missing luma scaling point (scale)");
+		afgs1.point_y_scaling[k] = atoi(s);
+	}
+
+	// Cb scaling function line
+	fgets(line, sizeof(line), cfg);
+	for (s = line; isblank(*s); s++); // skip whitespace
+	s = strtok(line, sep);             CHECK(s && !strcmp(s,"sCb"), AERR "expecting Cb scaling function (sCb)");
+	s = strtok(NULL, sep);             CHECK(s, AERR "missing num_cb_points");
+	afgs1.num_cb_points = atoi(s);     CHECK(afgs1.num_cb_points <= 10, "num_cb_points higher than 10");
+	for (int k=0; k<afgs1.num_cb_points; k++)
+	{
+		s = strtok(NULL, sep);         CHECK(s, AERR "missing Cb scaling point (value)");
+		afgs1.point_cb_values[k] = atoi(s);
+		s = strtok(NULL, sep);         CHECK(s, AERR "missing Cb scaling point (scale)");
+		afgs1.point_cb_scaling[k] = atoi(s);
+	}
+
+	// Cr scaling function line
+	fgets(line, sizeof(line), cfg);
+	for (s = line; isblank(*s); s++); // skip whitespace
+	s = strtok(line, sep);             CHECK(s && !strcmp(s,"sCr"), AERR "expecting Cr scaling function (sCr)");
+	s = strtok(NULL, sep);             CHECK(s, AERR "missing num_cr_points");
+	afgs1.num_cr_points = atoi(s);     CHECK(afgs1.num_cr_points <= 10, "num_cr_points higher than 10");
+	for (int k=0; k<afgs1.num_cr_points; k++)
+	{
+		s = strtok(NULL, sep);         CHECK(s, AERR "missing Cr scaling point (value)");
+		afgs1.point_cr_values[k] = atoi(s);
+		s = strtok(NULL, sep);         CHECK(s, AERR "missing Cr scaling point (scale)");
+		afgs1.point_cr_scaling[k] = atoi(s);
+	}
+
+	// Y coefficients line
+	fgets(line, sizeof(line), cfg);
+	for (s = line; isblank(*s); s++); // skip whitespace
+	s = strtok(line, sep);             CHECK(s && !strcmp(s,"cY"), AERR "expecting luma coefficients");
+	ncoef = 2 * afgs1.ar_coeff_lag * (afgs1.ar_coeff_lag + 1);
+	for (int k=0; k<ncoef; k++)
+	{
+		s = strtok(NULL, sep);         CHECK(s, AERR "missing luma AR coefficient");
+		afgs1.ar_coeffs_y[k] = atoi(s);
+	}
+
+	// Cb coefficients line
+	ncoef++;
+	fgets(line, sizeof(line), cfg);
+	for (s = line; isblank(*s); s++); // skip whitespace
+	s = strtok(line, sep);             CHECK(s && !strcmp(s,"cCb"), AERR "expecting Cb coefficients");
+	for (int k=0; k<ncoef; k++)
+	{
+		s = strtok(NULL, sep);         CHECK(s, AERR "missing Cb AR coefficient");
+		afgs1.ar_coeffs_cb[k] = atoi(s);
+	}
+
+	// Cr coefficients line
+	fgets(line, sizeof(line), cfg);
+	for (s = line; isblank(*s); s++); // skip whitespace
+	s = strtok(line, sep);             CHECK(s && !strcmp(s,"cCr"), AERR "expecting Cr coefficients");
+	for (int k=0; k<ncoef; k++)
+	{
+		s = strtok(NULL, sep);         CHECK(s, AERR "missing Cr AR coefficient");
+		afgs1.ar_coeffs_cr[k] = atoi(s);
+	}
+
+	// Note: afgs1.clip_to_restricted_range is missing in .tbl files --> set it to a default value ?
+
+	return 0;
 }
 
 static int read_cfg(const char* filename)
@@ -301,6 +430,7 @@ static int read_cfg(const char* filename)
 	char line[1024];
 	char *s, *v, *e;
 	int c=0, i=0, j=0;
+	int cnt1=0, cnt2=0;
 
 	cfg = fopen(filename, "rt");
 	if (!cfg)
@@ -318,13 +448,20 @@ static int read_cfg(const char* filename)
 			s++;
 		s = strtok(s, ":"); // get "name"
 		v = strtok(NULL, ":"); // get "value"
+
 		if (v == NULL)
-			continue;
+		{
+			if (!strncasecmp(s, "filmgrn1", 8))
+				return read_afgs1_tbl(cfg);
+			else
+				continue;
+		}
 		while (isblank(*v)) // skip leading whitespace of "value"
 			v++;
 		for (e=s; !isblank(*e) && *e; e++) // trim trailing whitespace of "name"
 			;
 		*e = '\0';
+		cnt1 ++;
 
 		// SEI
 		if      (!strcasecmp(s, "SEIFGCModelId"))                          { sei.model_id                   = atoi(v); }
@@ -373,34 +510,37 @@ static int read_cfg(const char* filename)
 		}
 		else if (!strcasecmp(s, "fg_characteristics_persistence_flag"))     { break; /* stop at the end of the first FGS SEI */ }
 
-		// AOM
-		else if (!strcasecmp(s, "AOMGrainSeed"))             { mtdt.grain_seed = atoi(v); }
-		else if (!strcasecmp(s, "AOMNumYPoints"))            { mtdt.num_y_points = atoi(v); CHECK(mtdt.num_y_points <= 14, "AOMNumYPoints higher than 14"); }
-		else if (!strcasecmp(s, "AOMPointYValues"))          { read_array_u8(mtdt.point_y_values, v); }
-		else if (!strcasecmp(s, "AOMPointYScaling"))         { read_array_u8(mtdt.point_y_scaling, v); }
-		else if (!strcasecmp(s, "AOMChromaScalingFromLuma")) { mtdt.chroma_scaling_from_luma = atoi(v); }
-		else if (!strcasecmp(s, "AOMNumCbPoints"))           { mtdt.num_cb_points = atoi(v); CHECK(mtdt.num_cb_points <= 10, "AOMNumCbPoints higher than 10"); }
-		else if (!strcasecmp(s, "AOMPointCbValues"))         { read_array_u8(mtdt.point_cb_values, v); }
-		else if (!strcasecmp(s, "AOMPointCbScaling"))        { read_array_u8(mtdt.point_cb_scaling, v); }
-		else if (!strcasecmp(s, "AOMNumCrPoints"))           { mtdt.num_cr_points = atoi(v); CHECK(mtdt.num_cr_points <= 10, "AOMNumCrPoints higher than 10"); }
-		else if (!strcasecmp(s, "AOMPointCrValues"))         { read_array_u8(mtdt.point_cr_values, v); }
-		else if (!strcasecmp(s, "AOMPointCrScaling"))        { read_array_u8(mtdt.point_cr_scaling, v); }
-		else if (!strcasecmp(s, "AOMGrainScaling"))          { mtdt.grain_scaling = atoi(v); CHECK(mtdt.grain_scaling >= 8 && mtdt.grain_scaling <= 11, "AOMGrainScaling out of 8..11 range"); }
-		else if (!strcasecmp(s, "AOMARCoeffLag"))            { mtdt.ar_coeff_lag = atoi(v); CHECK(mtdt.ar_coeff_lag <= 3, "AOMARCoeffLag higher than 3"); }
-		else if (!strcasecmp(s, "AOMARCoeffsY"))             { read_array_i16(mtdt.ar_coeffs_y, v); }
-		else if (!strcasecmp(s, "AOMARCoeffsCb"))            { read_array_i16(mtdt.ar_coeffs_cb, v); }
-		else if (!strcasecmp(s, "AOMARCoeffsCr"))            { read_array_i16(mtdt.ar_coeffs_cr, v); }
-		else if (!strcasecmp(s, "AOMARCoeffShift"))          { mtdt.ar_coeff_shift = atoi(v); CHECK(mtdt.ar_coeff_shift >= 6 && mtdt.ar_coeff_shift <= 9, "AOMARCoeffShift out of 6..9 range"); }
-		else if (!strcasecmp(s, "AOMGrainScaleShift"))       { mtdt.grain_scale_shift = atoi(v); CHECK(mtdt.grain_scale_shift <= 3, "AOMGrainScaleShift higher than 3"); }
-		else if (!strcasecmp(s, "AOMCbMult"))                { mtdt.cb_mult = atoi(v); }
-		else if (!strcasecmp(s, "AOMCbLumaMult"))            { mtdt.cb_luma_mult = atoi(v); }
-		else if (!strcasecmp(s, "AOMCbOffset"))              { mtdt.cb_offset = atoi(v); }
-		else if (!strcasecmp(s, "AOMCrMult"))                { mtdt.cr_mult = atoi(v); }
-		else if (!strcasecmp(s, "AOMCrLumaMult"))            { mtdt.cr_luma_mult = atoi(v); }
-		else if (!strcasecmp(s, "AOMCrOffset"))              { mtdt.cr_offset = atoi(v); }
-		else if (!strcasecmp(s, "AOMOverlapFlag"))           { mtdt.overlap_flag = atoi(v); }
-		else if (!strcasecmp(s, "AOMClipToRestrictedRange")) { mtdt.clip_to_restricted_range = atoi(v); }
+		// AFGS1
+		else if (!strcasecmp(s, "AFGS1GrainSeed"))             { afgs1.grain_seed = atoi(v); }
+		else if (!strcasecmp(s, "AFGS1NumYPoints"))            { afgs1.num_y_points = atoi(v); CHECK(afgs1.num_y_points <= 14, "AFGS1NumYPoints higher than 14"); }
+		else if (!strcasecmp(s, "AFGS1PointYValues"))          { read_array_u8(afgs1.point_y_values, v); }
+		else if (!strcasecmp(s, "AFGS1PointYScaling"))         { read_array_u8(afgs1.point_y_scaling, v); }
+		else if (!strcasecmp(s, "AFGS1ChromaScalingFromLuma")) { afgs1.chroma_scaling_from_luma = atoi(v); }
+		else if (!strcasecmp(s, "AFGS1NumCbPoints"))           { afgs1.num_cb_points = atoi(v); CHECK(afgs1.num_cb_points <= 10, "AFGS1NumCbPoints higher than 10"); }
+		else if (!strcasecmp(s, "AFGS1PointCbValues"))         { read_array_u8(afgs1.point_cb_values, v); }
+		else if (!strcasecmp(s, "AFGS1PointCbScaling"))        { read_array_u8(afgs1.point_cb_scaling, v); }
+		else if (!strcasecmp(s, "AFGS1NumCrPoints"))           { afgs1.num_cr_points = atoi(v); CHECK(afgs1.num_cr_points <= 10, "AFGS1NumCrPoints higher than 10"); }
+		else if (!strcasecmp(s, "AFGS1PointCrValues"))         { read_array_u8(afgs1.point_cr_values, v); }
+		else if (!strcasecmp(s, "AFGS1PointCrScaling"))        { read_array_u8(afgs1.point_cr_scaling, v); }
+		else if (!strcasecmp(s, "AFGS1GrainScaling"))          { afgs1.grain_scaling = atoi(v); CHECK(afgs1.grain_scaling >= 8 && afgs1.grain_scaling <= 11, "AFGS1GrainScaling out of 8..11 range"); }
+		else if (!strcasecmp(s, "AFGS1ARCoeffLag"))            { afgs1.ar_coeff_lag = atoi(v); CHECK(afgs1.ar_coeff_lag <= 3, "AFGS1ARCoeffLag higher than 3"); }
+		else if (!strcasecmp(s, "AFGS1ARCoeffsY"))             { read_array_i16(afgs1.ar_coeffs_y, v); }
+		else if (!strcasecmp(s, "AFGS1ARCoeffsCb"))            { read_array_i16(afgs1.ar_coeffs_cb, v); }
+		else if (!strcasecmp(s, "AFGS1ARCoeffsCr"))            { read_array_i16(afgs1.ar_coeffs_cr, v); }
+		else if (!strcasecmp(s, "AFGS1ARCoeffShift"))          { afgs1.ar_coeff_shift = atoi(v); CHECK(afgs1.ar_coeff_shift >= 6 && afgs1.ar_coeff_shift <= 9, "AFGS1ARCoeffShift out of 6..9 range"); }
+		else if (!strcasecmp(s, "AFGS1GrainScaleShift"))       { afgs1.grain_scale_shift = atoi(v); CHECK(afgs1.grain_scale_shift <= 3, "AFGS1GrainScaleShift higher than 3"); }
+		else if (!strcasecmp(s, "AFGS1CbMult"))                { afgs1.cb_mult = atoi(v); }
+		else if (!strcasecmp(s, "AFGS1CbLumaMult"))            { afgs1.cb_luma_mult = atoi(v); }
+		else if (!strcasecmp(s, "AFGS1CbOffset"))              { afgs1.cb_offset = atoi(v); }
+		else if (!strcasecmp(s, "AFGS1CrMult"))                { afgs1.cr_mult = atoi(v); }
+		else if (!strcasecmp(s, "AFGS1CrLumaMult"))            { afgs1.cr_luma_mult = atoi(v); }
+		else if (!strcasecmp(s, "AFGS1CrOffset"))              { afgs1.cr_offset = atoi(v); }
+		else if (!strcasecmp(s, "AFGS1OverlapFlag"))           { afgs1.overlap_flag = atoi(v); }
+		else if (!strcasecmp(s, "AFGS1ClipToRestrictedRange")) { afgs1.clip_to_restricted_range = atoi(v); }
+
+		else cnt2 ++;
 	}
+	CHECK(cnt1 > cnt2, "could not ready anything from configuration file");
 
 	return 0;
 }
@@ -525,8 +665,8 @@ int main(int argc, const char **argv)
 	adjust_chroma_cfg();
 	apply_gain(gain);
 
-	if (mtdt.num_y_points)
-		vfgs_init_mtdt(&mtdt);
+	if (afgs1.num_y_points)
+		vfgs_init_afgs1(&afgs1);
 	else
 		vfgs_init_sei(&sei);
 

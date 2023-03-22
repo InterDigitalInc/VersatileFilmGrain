@@ -59,7 +59,7 @@ typedef struct fgs_sei_s {
 	int16 comp_model_value[3][256][SEI_MAX_MODEL_VALUES];
 } fgs_sei;
 
-typedef struct fgs_metadata_s {
+typedef struct fgs_afgs1_s {
 	uint16 grain_seed;
 	uint8 num_y_points; /* 0..14 */
 	uint8 point_y_values[14]; /* shall be in increasing order */
@@ -86,10 +86,10 @@ typedef struct fgs_metadata_s {
 	uint16 cr_offset; /* 9-bit */
 	uint8 overlap_flag;
 	uint8 clip_to_restricted_range;
-} fgs_metadata;
+} fgs_afgs1;
 
 void vfgs_init_sei(fgs_sei* cfg);
-void vfgs_init_mtdt(fgs_metadata* cfg);
+void vfgs_init_afgs1(fgs_afgs1* cfg);
 
 #endif  // _VFGS_FW_H_
 
