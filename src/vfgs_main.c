@@ -550,14 +550,33 @@ static void apply_gain(unsigned gain)
 	if (gain==100)
 		return;
 
-	for(;gain>100; gain/=2)
-		sei.log2_scale_factor --;
-	for(;gain && gain<50; gain*=2)
-		sei.log2_scale_factor ++;
+	if (afgs1.num_y_points)
+	{
+		// AFGS1
+		for(;gain>100; gain/=2)
+			afgs1.grain_scaling --;
+		for(;gain && gain<50; gain*=2)
+			afgs1.grain_scaling ++;
 
-	for (int c=0; c<3; c++)
-		for (int i=0; sei.comp_model_present_flag[c] && i<sei.num_intensity_intervals[c]; i++)
-			sei.comp_model_value[c][i][0] = (int16)((int)sei.comp_model_value[c][i][0] * gain / 100);
+		for (int i=0; i<afgs1.num_y_points; i++)
+			afgs1.point_y_scaling[i] = (uint8)((int)afgs1.point_y_scaling[i] * gain / 100);
+		for (int i=0; i<afgs1.num_cb_points; i++)
+			afgs1.point_cb_scaling[i] = (uint8)((int)afgs1.point_cb_scaling[i] * gain / 100);
+		for (int i=0; i<afgs1.num_cr_points; i++)
+			afgs1.point_cr_scaling[i] = (uint8)((int)afgs1.point_cr_scaling[i] * gain / 100);
+	}
+	else
+	{
+		// FGC SEI
+		for(;gain>100; gain/=2)
+			sei.log2_scale_factor --;
+		for(;gain && gain<50; gain*=2)
+			sei.log2_scale_factor ++;
+
+		for (int c=0; c<3; c++)
+			for (int i=0; sei.comp_model_present_flag[c] && i<sei.num_intensity_intervals[c]; i++)
+				sei.comp_model_value[c][i][0] = (int16)((int)sei.comp_model_value[c][i][0] * gain / 100);
+	}
 }
 
 static int help(const char* name)
