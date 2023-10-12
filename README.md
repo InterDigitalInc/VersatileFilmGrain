@@ -1,3 +1,8 @@
+Table of contents:
+1. [ VFGS - Versatile film grain synthesis ](#vfgs)
+2. [ FGC designer ](#fgc-designer)
+
+<a name="vfgs"></a>
 # VFGS - Versatile film grain synthesis
 
 Software model of hardware-friendly film grain synthesis, supporting FGC SEI message and AOM-registered ITU-T T35 metadata (also called AFGS1).
@@ -52,6 +57,18 @@ Please use fork and pull requests. Examples of welcome contributions:
 - SIMD and GPU acceleration (HW layer)
 - HDL code / HW design (HW layer)
 - Further improved FGC SEI message support (FW layer)
+
+## License
+
+A BSD 3-clause-clear license is applicable. See the [LICENSE](LICENSE) file.
+
+<a name="fgc-designer"></a>
+# FGC designer
+A python script called fgc-designer.py is present at the root of the repository. This is a graphical interactive tool that can be used to display and adjust film grain parameters.
+
+After loading an FGC configuration file (currently, only FGC SEI in frequency-filtering mode is supported), and selecting the color component, the mouse can be used to adjust intensity interval boundaries, gain and frequency cutoffs (just click and drag). An interval is removed by making it zero-length, and is split by double-clicking.
+
+External dependencies are matplotlib and numpy.
 
 ## License
 
