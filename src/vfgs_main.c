@@ -155,7 +155,7 @@ static void fill_model_array(int16 *x, int n, int model_id)
 	if (n<2) { *x++ = model_id ? 0 : DEFAULT_FREQ; } // H high cutoff / 1st AR coef (left & top)
 	if (n<3) { x[0] = model_id ? 0 : x[-1]; x++;   } // V high cutoff / x-comp corr
 	if (n<4) { *x++ = 0;                           } // H low cutoff / 2nd AR coef (top-left, top-right)
-	if (n<5) { *x++ = model_id;                    } // H low cutoff / aspect ratio
+	if (n<5) { *x++ = model_id << sei.log2_scale_factor; } // V low cutoff / aspect ratio
 	if (n<6) { *x++ = 0;                           } // x-comp corr / 3rd AR coef (left-left, top-top)
 }
 

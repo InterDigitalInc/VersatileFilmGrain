@@ -427,11 +427,11 @@ static void vfgs_make_ar_pattern(const int8* buf0, int8 buf[], int8 P[], int siz
 		case 6:
 			// SEI.AR mode
 			coef[3][2] = ar_coef[1]; // left
-			coef[2][3] = ar_coef[1]; // top
-			coef[2][2] = ar_coef[3]; // top-left
-			coef[2][4] = ar_coef[3]; // top-right
+			coef[2][3] = (ar_coef[1] * ar_coef[4]) >> scale; // top
+			coef[2][2] = (ar_coef[3] * ar_coef[4]) >> scale; // top-left
+			coef[2][4] = (ar_coef[3] * ar_coef[4]) >> scale; // top-right
 			coef[3][1] = ar_coef[5]; // left-left
-			coef[1][3] = ar_coef[5]; // top-top
+			coef[1][3] = ((int32)ar_coef[5] * ar_coef[4] * ar_coef[4]) >> (2*scale) ; // top-top
 			L = 2;
 			break;
 
@@ -483,7 +483,7 @@ static void vfgs_make_ar_pattern(const int8* buf0, int8 buf[], int8 P[], int siz
 					if (suby>1) Z += buf0[width*subx*(j+1) + i] + buf0[width*subx*(j+1) + i+1];
 					g += cx * round(Z,subx+suby-2);
 				}
-				
+
 				g = round(g, scale);
 			}
 
@@ -499,6 +499,18 @@ static void vfgs_make_ar_pattern(const int8* buf0, int8 buf[], int8 P[], int siz
 	for (y=0; y<64/suby; y++)
 		for (x=0; x<64/subx; x++)
 			P[size*y+x] = buf[width*(3+6/suby+y) + (3+6/subx+x)];
+}
+
+int same_pattern(fgs_sei* cfg, int32 a, int32 b)
+{
+	int16* coef_a = &cfg->comp_model_value[0][0][0] + a;
+	int16* coef_b = &cfg->comp_model_value[0][0][0] + b;
+
+	for (int i=1; i<SEI_MAX_MODEL_VALUES; i++)
+		if (coef_a[i] != coef_b[i])
+			return 0;
+
+	return 1;
 }
 
 /** Initialize "hardware" interface from FGC SEI message */
@@ -522,7 +534,7 @@ void vfgs_init_sei(fgs_sei* cfg)
 		{
 			np = 0;
 			memset(intensities, 0, sizeof(intensities));
-			memset(patterns, 0, sizeof(patterns));
+			memset(patterns, ~0, sizeof(patterns));
 		}
 		// 1. Look for different patterns, up to max supported number
 		if (cfg->comp_model_present_flag[c])
@@ -530,14 +542,12 @@ void vfgs_init_sei(fgs_sei* cfg)
 			for (k=0; k<cfg->num_intensity_intervals[c]; k++)
 			{
 				a  = cfg->intensity_interval_lower_bound[c][k];
-				int c1 = (int)cfg->comp_model_value[c][k][1] & 0xff; // FH / coef 1
-				int c2 = (int)cfg->comp_model_value[c][k][2] & 0xff; // FV / x-comp coef
-				int c3 = (int)cfg->comp_model_value[c][k][3] & 0xff; // -- / coef 2
-				int c5 = (int)cfg->comp_model_value[c][k][5] & 0xff; // -- / coef 3
-				uint32 id = (c1 << 24) | (c3 << 16) | (c5 << 8) | c2;
+				uint32 id = SEI_MAX_MODEL_VALUES*(k + 256*c);
 
 				for (i=0; i<VFGS_MAX_PATTERNS; i++)
-					if (patterns[i] == id) break;
+					if (same_pattern(cfg, patterns[i], id))
+						break;
+
 				if (i==VFGS_MAX_PATTERNS && np < VFGS_MAX_PATTERNS) // can add it
 				{
 					// keep them sorted (by intensity). The goal of this sort is
@@ -563,11 +573,7 @@ void vfgs_init_sei(fgs_sei* cfg)
 			// 2. Register the patterns (with correct order)
 			for (i=0; i<np; i++)
 			{
-				int16 coef[6] = {0, 0, 0, 0, 0, 0};
-				coef[1] = (int8)((patterns[i] >> 24) & 0xff);
-				coef[3] = (int8)((patterns[i] >> 16) & 0xff);
-				coef[5] = (int8)((patterns[i] >>  8) & 0xff);
-				coef[2] = (int8)((patterns[i] >>  0) & 0xff);
+				int16* coef = &cfg->comp_model_value[0][0][0] + patterns[i];
 
 				if (c==0)
 				{
@@ -599,14 +605,10 @@ void vfgs_init_sei(fgs_sei* cfg)
 					{
 						a = cfg->intensity_interval_lower_bound[cc][k];
 						b = cfg->intensity_interval_upper_bound[cc][k];
-						int c1 = (int)cfg->comp_model_value[c][k][1] & 0xff; // FH / coef 1
-						int c2 = (int)cfg->comp_model_value[c][k][2] & 0xff; // FV / x-comp coef
-						int c3 = (int)cfg->comp_model_value[c][k][3] & 0xff; // -- / coef 2
-						int c5 = (int)cfg->comp_model_value[c][k][5] & 0xff; // -- / coef 3
-						uint32 id = (c1 << 24) | (c3 << 16) | (c5 << 8) | c2;
+						uint32 id = SEI_MAX_MODEL_VALUES*(k + 256*cc);
 
 						for (i=0; i<VFGS_MAX_PATTERNS; i++)
-							if (patterns[i] == id)
+							if (same_pattern(cfg, patterns[i], id))
 								break;
 						// Note: if not found, could try to find interpolation value
 

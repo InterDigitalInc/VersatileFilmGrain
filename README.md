@@ -11,7 +11,7 @@ Details of design considerations regarding film grain synthesis can be found in 
 Compared to FGC SEI message, AFGS1 specification supports a larger number of AR coefficients, but does not support local adapation of grain size/shape; it can also specify a chroma grain strength local adaptation from a color mix, which is not implemented in this software.
 
 This software is designed as a model for hardware designers; it uses the C language, and is organized in separate layers:
-* the hardware layer (in vfgs_hw.c), which runs a the process for the full picture, based on grain patterns memory, local adaptation LUTs, and a few other parameters. This is the piece that is potentially implemented in hardware.
+* the hardware layer (in vfgs_hw.c), which performs the actual grain synthesis process, based on grain patterns memory, local adaptation LUTs, and a few other parameters. This is the piece that is potentially implemented in hardware.
 * the firmware layer (in vfgs_fw.c), that converts input model parameters (e.g. FGC SEI) to hardware configuration. This part can be easily modified to adapt to other grain metadata formats, to generate grain patterns in a different way, etc.
 * the outer layer, made of the main program and YUV I/O routines.
 
