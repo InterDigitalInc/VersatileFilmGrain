@@ -41,10 +41,14 @@ from tkinter import (ttk, Menu, filedialog as fd)
 import matplotlib
 import numpy as np
 import ctypes.wintypes
+import math
+from math import log2
+import os
 
 matplotlib.use('TkAgg')
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import (FigureCanvasTkAgg,NavigationToolbar2Tk)
+from matplotlib.backend_bases import MouseButton
 
 # ------------------------------------------------------------------------------
 # FGC SEI cfg read/write
@@ -113,6 +117,11 @@ class FgcSei:
 				[  64, 8, 8 ],
 				[  96, 8, 8 ],
 				[ 128, 8, 8 ]]]
+		self.enable = \
+			[[ True ]*self.num_intensity_intervals[0],
+			 [ True ]*self.num_intensity_intervals[1],
+			 [ True ]*self.num_intensity_intervals[2]]
+		self.gain = 100
 
 	def load(self, filename):
 		parser = configparser.ConfigParser(delimiters=(":"),comment_prefixes=('#'),inline_comment_prefixes=('#'))
@@ -149,6 +158,9 @@ class FgcSei:
 			else:
 				self.num_intensity_intervals[c] = 0
 
+			self.enable[c] = [ True ]*self.num_intensity_intervals[c]
+			self.gain = 100
+
 		return 0
 
 	def cat(self):
@@ -167,12 +179,12 @@ class FgcSei:
 			if self.comp_model_present_flag[k]:
 				print(f'comp_model_value[{k}]               : {self.comp_model_value[k]}')
 
-	def save(self, filename):
+	def save(self, filename, mask=False):
 		with open(filename, 'w') as f:
 			f.write('SEIFGCEnabled                          : 1\n')
 			f.write('SEIFGCCancelFlag                       : 0\n')
 			f.write('SEIFGCPersistenceFlag                  : 1\n')
-			f.write('SEIFGCModelID                          : {self.model_id}\n')
+			f.write(f'SEIFGCModelID                          : {self.model_id}\n')
 			f.write('SEIFGCSepColourDescPresentFlag         : 0\n')
 			f.write('SEIFGCBlendingModeID                   : 0\n')
 			f.write(f'SEIFGCLog2ScaleFactor                  : {self.log2_scale_factor}\n')
@@ -192,7 +204,11 @@ class FgcSei:
 					f.write(f'SEIFGCIntensityIntervalUpperBoundComp{c} : {array2str(self.intensity_interval_upper_bound[c])}\n')
 			for c in range(3):
 				if self.comp_model_present_flag[c]:
-					f.write(f'SEIFGCCompModelValuesComp{c}             : {array2str2(self.comp_model_value[c])}\n')
+					x = [self.comp_model_value[c][k].copy() for k in range(self.num_intensity_intervals[c])]
+					for k in range(self.num_intensity_intervals[c]):
+						if mask and not self.enable[c][k]:
+							x[k][0] = 0
+					f.write(f'SEIFGCCompModelValuesComp{c}             : {array2str2(x)}\n')
 
 	def split(self,c,k,i):
 		if (self.comp_model_present_flag[c] and k < self.num_intensity_intervals[c]):
@@ -200,16 +216,38 @@ class FgcSei:
 				self.intensity_interval_lower_bound[c].insert(k+1,i)
 				self.intensity_interval_upper_bound[c].insert(k,i-1)
 				self.comp_model_value[c].insert(k,self.comp_model_value[c][k].copy())
+				self.enable[c].insert(k,self.enable[c][k])
 				self.num_intensity_intervals[c] += 1
 
 # ------------------------------------------------------------------------------
 # YUV preview window
 # ------------------------------------------------------------------------------
 
-def read_yuv(filename, width=1920, height=1080, bits=10, format=420):
+def read_yuv(filename, frame=0, width=1920, height=1080, bits=8, format=420):
 	''' read one frame from a YUV file '''
-	Y = np.fromfile(filename, dtype='uint16', count=width*height, offset=0).reshape(height,width)
-	return Y
+	# TODO: detect size --> regex [non-number][3 or 4 numbers]x[3 or 4 numbers][non-number]
+	# TODO: detect 10-bit
+	# TODO: detect 422
+	# Fallback: ask user
+	t = 'uint16' if bits==10 else 'uint8'
+	if format==400:
+		cwidth = cheight = 0
+		U = V = []
+	else:
+		cwidth = int(width / 2) if format==420 or format==422 else width
+		cheight = int(height / 2) if format==420 else height
+	ysize = width * height
+	csize = cwidth * cheight
+	psize = ysize + 2*csize
+	offset = frame * psize
+	Y = np.fromfile(filename, dtype=t, count=width*height, offset=offset).reshape(height,width)
+	if cwidth:
+		U = np.fromfile(filename, dtype=t, count=cwidth*cheight, offset=offset+ysize).reshape(cheight,cwidth)
+		V = np.fromfile(filename, dtype=t, count=cwidth*cheight, offset=offset+ysize+csize).reshape(cheight,cwidth)
+	return Y,U,V
+
+def yuv2rgb(Y, U, V):
+	return rgb
 
 def get_monitors_info():
 	''' Obtain all monitors information and return information for the second monitor '''
@@ -233,20 +271,23 @@ def get_monitors_info():
 	return monitors
 
 class Preview(tk.Toplevel):
-	def __init__(self, parent, Y):
+	def __init__(self, parent, filename, frame=0):
 		super().__init__(parent)
 		self.title('Preview')
 		self.fullscreen = False
 
 		figure = Figure(figsize=(6, 4), dpi=100)
-		figure_canvas = FigureCanvasTkAgg(figure, self)
+		self.figure_canvas = FigureCanvasTkAgg(figure, self)
 		self.axes = figure.add_axes((0,0,1,1))
 		self.axes.axis(False)
-		figure_canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
-		figure_canvas.mpl_connect('button_press_event', self.on_press)
+		#self.axes.axis([0,600,400,0]) # no zoom --> size of figure
+		self.figure_canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+		self.figure_canvas.mpl_connect('button_press_event', self.on_press)
 
-		# show image
-		self.axes.imshow(Y, cmap='gray')
+		self.clean_name = filename
+		self.frame = frame
+		self.mode = 0
+		self.regrain()
 
 	def on_press(self, event):
 		if event.inaxes and event.dblclick:
@@ -273,6 +314,31 @@ class Preview(tk.Toplevel):
 				#self.attributes("-fullscreen", True)
 				self.fullscreen = True
 
+	def regrain(self, gain=100):
+		self.clean_yuv = read_yuv(self.clean_name, self.frame)
+		# call vfgs using cfg
+		# cfg.save(__preview.cfg)
+		# vfgs -w {width} -h {height} -b {bits} --outdepth 8 -n 1 -s {frame} -g {gain} -c __preview.cfg {self.clean_name} __preview.yuv
+		self.grain_yuv = self.clean_yuv
+		self.imshow()
+
+	def imshow(self):
+		Y, U, V = self.grain_yuv
+		if self.mode==0:
+			self.axes.imshow(Y, cmap='gray')
+		elif self.mode==1:
+			self.axes.imshow(U, cmap='gray')
+		elif self.mode==2:
+			self.axes.imshow(V, cmap='gray')
+		else:
+			self.axes.imshow(yuv2rgb(Y,U,V))
+		# also consider clean/grainy
+		self.figure_canvas.draw()
+
+	def setmode(self, mode):
+		self.mode = mode
+		self.imshow()
+
 # ------------------------------------------------------------------------------
 # Main app: interactive plot
 # ------------------------------------------------------------------------------
@@ -282,13 +348,17 @@ class App(tk.Tk):
 		super().__init__()
 		self.picked = []
 		self.picked_split = []
+		self.picked_k = []
+		self.seed = 0xdeadbeef
+		self.yuvname = []
+		self.frame = tk.IntVar(value=0)
 
 		self.title('FGC SEI designer [draft]')
 
 		# create the figure
 		figure = Figure(figsize=(6, 4), dpi=100)
 		self.figure_canvas = FigureCanvasTkAgg(figure, self)
-		NavigationToolbar2Tk(self.figure_canvas, self)
+		NavigationToolbar2Tk(self.figure_canvas, self, pack_toolbar=False).grid(column=0, row=0, sticky='ew', columnspan=3)
 
 		# create the menubar
 		menubar = Menu(self)
@@ -297,8 +367,8 @@ class App(tk.Tk):
 		file_menu = Menu(menubar, tearoff=0)
 		file_menu.add_command(label='Load cfg', underline=0, command=self.on_load_cfg)
 		file_menu.add_command(label='Save cfg', underline=0, command=self.on_save_cfg)
-		#file_menu.add_separator()
-		#file_menu.add_command(label='Load YUV (clean)', underline=10, command=self.on_load_yuv_clean)
+		file_menu.add_separator()
+		file_menu.add_command(label='Load YUV (clean)', underline=10, command=self.on_load_yuv_clean)
 		#file_menu.add_command(label='Load YUV (grainy/original)', underline=10)
 		file_menu.add_separator()
 		file_menu.add_command(label='Exit', command=self.quit, underline=0)
@@ -314,7 +384,7 @@ class App(tk.Tk):
 		# create axes
 		self.ax1 = figure.add_subplot()
 		self.ax1.axis([0,256,0,255])
-		self.ax1.set_ylabel('Gain')
+		self.ax1.set_ylabel(f'Gain (x 2^{cfg.log2_scale_factor})')
 
 		self.ax2 = self.ax1.twinx()
 		self.ax2.axis([0,256,0,15])
@@ -326,7 +396,54 @@ class App(tk.Tk):
 		self.figure_canvas.mpl_connect('button_press_event', self.on_press)
 		self.figure_canvas.mpl_connect('motion_notify_event', self.on_motion)
 		self.figure_canvas.mpl_connect('button_release_event', self.on_release)
-		self.figure_canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+#		self.figure_canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+		self.figure_canvas.get_tk_widget().grid(column=0, row=1,columnspan=3, sticky='nswe')
+
+		# sliders
+		self.columnconfigure(2, weight=3)
+		self.rowconfigure(1, weight=3)
+		self.log2_scale_factor = tk.IntVar(value=cfg.log2_scale_factor)
+		ttk.Label(self,text='Log2ScaleFactor').grid(column=0, row=2, sticky='w',padx=5) # TODO: same font as Matplotlib
+		self.label1 = ttk.Label(self, text=f'{cfg.log2_scale_factor}');
+		self.label1.grid(column=1, row=2, sticky='e',padx=5)
+		ttk.Scale(self, from_=2, to=7, variable=self.log2_scale_factor, command=self.slider1_changed).grid(column=2, row=2, sticky='we',padx=5,pady=5) # TODO: snap
+
+		ttk.Label(self,text='Global scale').grid(column=0, row=3, sticky='w',padx=5)
+		self.gain = tk.DoubleVar(value=log2(cfg.gain/100.0))
+		self.label2 = ttk.Label(self, text=f'{cfg.gain}', width=3, anchor="e")
+		self.label2.grid(column=1, row=3, sticky='e',padx=5)
+		ttk.Scale(self, from_=-1, to=1, variable=self.gain, command=self.slider2_changed).grid(column=2, row=3, sticky='we',padx=5,pady=5) # TODO: snap
+
+		ttk.Label(self,text='YUV frame').grid(column=0, row=4, sticky='w',padx=5)
+		self.label3 = ttk.Label(self, text=f'{self.frame.get()}', width=3, anchor="e")
+		self.label3.grid(column=1, row=4, sticky='e',padx=5)
+		self.scale3 = ttk.Scale(self, from_=0, to=0, variable=self.frame, command=self.slider3_changed)
+		self.scale3.grid(column=2, row=4, sticky='we',padx=5,pady=5) # TODO: snap
+
+		# TODO: align widgets & plot background color
+
+		self.update_plot(0)
+
+	def slider1_changed(self, event):
+		x = self.log2_scale_factor.get()
+		if x != cfg.log2_scale_factor:
+			cfg.log2_scale_factor = self.log2_scale_factor.get()
+			self.label1.configure(text=f'{cfg.log2_scale_factor}')
+			self.ax1.set_ylabel(f'Gain (x 2^{cfg.log2_scale_factor})')
+			self.figure_canvas.draw()
+			self.regrain()
+
+	def slider2_changed(self, event):
+		x = round(pow(2,self.gain.get())*100)
+		if (x != cfg.gain):
+			cfg.gain = round(pow(2,self.gain.get())*100)
+			self.label2.configure(text=f'{cfg.gain}')
+			self.regrain()
+
+	def slider3_changed(self, event):
+		self.label3.configure(text=f'{self.frame.get()}')
+		self.seed = ((self.seed + 1) & 0xffffffff)
+		self.regrain()
 
 	# Select color component
 	def on_color_component(self):
@@ -337,10 +454,15 @@ class App(tk.Tk):
 		filename = fd.askopenfilename(title="Choose an FGC SEI config file (VTM format)",filetype=[('cfg files','.cfg'),('all files','.*')])
 		if (filename):
 			cfg.load(filename)
+			self.log2_scale_factor.set(cfg.log2_scale_factor)
+			self.label1.configure(text=f'{cfg.log2_scale_factor}')
+			self.ax1.set_ylabel(f'Gain (x 2^{cfg.log2_scale_factor})')
+			self.gain.set(0)
 			# TODO: restore previous if load failed ?
 			#self.color_component.set(0)
 			self.update_plot(self.color_component.get())
 			self.figure_canvas.draw()
+			self.regrain()
 
 	def on_save_cfg(self):
 		filename = fd.asksaveasfilename(title="Save FGC SEI config (VTM format) as",filetypes=[('cfg files','.cfg')])
@@ -348,10 +470,17 @@ class App(tk.Tk):
 			cfg.save(filename)
 
 	def on_load_yuv_clean(self):
-		filename = fd.askopenfilename(title="Choose YUV file (clean/compressed)",filetype=[('YUV files','.yuv'),('all files','.*')])
-		if (filename):
-			Y = read_yuv(filename);
-			preview = Preview(self, Y);
+		self.yuvname = fd.askopenfilename(title="Choose YUV file (clean/compressed)",filetype=[('YUV files','.yuv'),('all files','.*')])
+		if (self.yuvname):
+			self.yuvsize = os.path.getsize(self.yuvname)/(3110400*4)
+			self.seed = ((self.seed + 1) & 0xffffffff)
+			self.regrain()
+		else:
+			self.yuvsize = 0
+		# update slide 3 dimension
+		self.scale3.configure(to=self.yuvsize - 1);
+#		if (filename):
+#			preview = Preview(self, filename, 100);
 
 	# Mouse click: pick some items to be dragged
 	def on_press(self, event):
@@ -408,7 +537,7 @@ class App(tk.Tk):
 			self.picked_k = [k for k,a in enumerate(self.linesG) if event.xdata >= a.get_xdata()[0] and event.xdata < a.get_xdata()[1]][0:1]
 
 			# Double-click in a interval --> split
-			self.picked_split = [round(event.xdata),] if self.picked_k and event.dblclick else [] # floor instead ?
+			self.picked_split = [round(event.xdata),] if self.picked_k and event.dblclick and event.button is MouseButton.LEFT else [] # floor instead ?
 
 			# Helper flag = something is picked
 			self.picked = picked_I + self.picked_G + self.picked_F
@@ -454,15 +583,22 @@ class App(tk.Tk):
 				self.linesF[k].set_ydata([F,F])
 			self.figure_canvas.draw()
 			self.update_cfg(self.color_component.get())
-			# TODO: update YUV (send event ?)
+			self.regrain()
 
 	# Mouse release: update cfg (for split), update plot (for split & merge)
 	def on_release(self, event):
-		self.picked = []
+		c = self.color_component.get()
 		if (self.picked_split):
 			cfg.split(0, self.picked_k[0], self.picked_split[0])
 			self.picked_split = []
-		self.update_plot(self.color_component.get())
+		elif not self.picked and self.picked_k and event.button is MouseButton.RIGHT:
+			k = self.picked_k[0]
+			cfg.enable[c][k] = not cfg.enable[c][k]
+			self.picked_k = []
+			self.regrain()
+
+		self.picked = []
+		self.update_plot(c)
 		self.figure_canvas.draw()
 
 	# Update cfg from plot
@@ -473,6 +609,7 @@ class App(tk.Tk):
 			if (H > L):
 				cfg.intensity_interval_lower_bound[c][i] = L
 				cfg.intensity_interval_upper_bound[c][i] = H - 1
+				cfg.enable[c][i] = self.enable[k]
 				G = self.linesG[k].get_ydata()[0]
 				cfg.comp_model_value[c][i][0] = G
 				if (cfg.num_model_values[c] > 1 and cfg.model_id==0):
@@ -481,10 +618,17 @@ class App(tk.Tk):
 				if (cfg.num_model_values[c] > 2 and cfg.model_id==0):
 					cfg.comp_model_value[c][i][2] = F # TODO: adjust Fh/Fv with aspect ratio slider
 				i += 1
+
 		cfg.num_intensity_intervals[c] = i
 		del cfg.intensity_interval_lower_bound[c][i:]
 		del cfg.intensity_interval_upper_bound[c][i:]
 		del cfg.comp_model_value[c][i:]
+		del cfg.enable[c][i:]
+
+	def regrain(self):
+		if (self.yuvname):
+			cfg.save('__preview.cfg',mask=True);
+			os.system(f'vfgs -w 3840 -h 2160 -b 8 --outdepth 8 -n 1 -s {self.frame.get()} -r {self.seed} -g {cfg.gain} -c __preview.cfg {self.yuvname} __preview_3840x2160_8b.yuv')
 
 	# Update plot from cfg
 	def update_plot(self, c):
@@ -495,20 +639,23 @@ class App(tk.Tk):
 		self.linesB = []
 		self.linesG = []
 		self.linesF = []
+		self.enable = []
 
 		for k in range(cfg.num_intensity_intervals[c]):
+			self.enable.append(cfg.enable[c][k])
+			alpha = 1 if self.enable[k] else 0.1
 			a = cfg.intensity_interval_lower_bound[c][k]
 			b = cfg.intensity_interval_upper_bound[c][k]+1
 			g = cfg.comp_model_value[c][k][0]
-			line, = self.ax1.plot([a,a], [0,g],'b--', picker=5)
+			line, = self.ax1.plot([a,a], [0,g],'b--', alpha=alpha, picker=5)
 			self.linesA.append(line)
-			line, = self.ax1.plot([b,b], [0,g],'b--', picker=5)
+			line, = self.ax1.plot([b,b], [0,g],'b--', alpha=alpha, picker=5)
 			self.linesB.append(line)
-			line, = self.ax1.plot([a,b], [g,g],'bo-', picker=5)
+			line, = self.ax1.plot([a,b], [g,g],'bo-', alpha=alpha, picker=5)
 			self.linesG.append(line)
 			if (cfg.num_model_values[c] > 1 and cfg.model_id==0):
 				f = cfg.comp_model_value[c][k][1]
-				line, = self.ax2.plot([a,b], [f,f],'s-', color='tab:green', picker=5)
+				line, = self.ax2.plot([a,b], [f,f],'s-', color='tab:green', alpha=alpha, picker=5)
 				self.linesF.append(line)
 
 		self.ax1.set_xlabel(('Y','Cb','Cr')[c])
