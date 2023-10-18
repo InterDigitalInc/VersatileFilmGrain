@@ -501,7 +501,7 @@ static void vfgs_make_ar_pattern(const int8* buf0, int8 buf[], int8 P[], int siz
 			P[size*y+x] = buf[width*(3+6/suby+y) + (3+6/subx+x)];
 }
 
-int same_pattern(fgs_sei* cfg, int32 a, int32 b)
+static int same_pattern(fgs_sei* cfg, int32 a, int32 b)
 {
 	int16* coef_a = &cfg->comp_model_value[0][0][0] + a;
 	int16* coef_b = &cfg->comp_model_value[0][0][0] + b;

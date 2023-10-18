@@ -589,6 +589,7 @@ static int help(const char* name)
 	printf("   -f,--format   <value>     Chroma format (420/422/444) [%s]\n", format_str(format));
 	printf("   -n,--frames   <value>     Number of frames to process (0=all) [%d]\n", frames);
 	printf("   -s,--seek     <value>     Picture start index within input file [%d]\n", seek);
+	printf("   -r,--seed     <value>     Random seed\n", seek);
 	printf("   -c,--cfg      <filename>  Read film grain configuration file\n");
 	printf("   -g,--gain     <value>     Apply a global scale (in percent) to grain strength\n");
 	printf("   --help                    Display this page\n\n");
@@ -621,6 +622,7 @@ int main(int argc, const char **argv)
 	int err=0;
 	yuv frame, oframe;
 	unsigned gain = 100;
+	unsigned seed = 0;
 
 	// Parse parameters
 	for (i=1; i<argc && !err; i++)
@@ -633,6 +635,7 @@ int main(int argc, const char **argv)
 		else if (!strcasecmp(param, "-f") || !strcasecmp(param, "--format"))      { if (i+1 < argc) format = read_format(argv[++i]); else err = 1; }
 		else if (!strcasecmp(param, "-n") || !strcasecmp(param, "--frames"))      { if (i+1 < argc) frames = atoi(argv[++i]); else err = 1; }
 		else if (!strcasecmp(param, "-s") || !strcasecmp(param, "--seek"))        { if (i+1 < argc) seek   = atoi(argv[++i]); else err = 1; }
+		else if (!strcasecmp(param, "-r") || !strcasecmp(param, "--seed"))        { if (i+1 < argc) seed   = atoi(argv[++i]); else err = 1; }
 		else if (!strcasecmp(param, "-c") || !strcasecmp(param, "--cfg"))         { if (i+1 < argc) err = read_cfg(argv[++i]); else err = 1; }
 		else if (!strcasecmp(param, "-g") || !strcasecmp(param, "--gain"))        { if (i+1 < argc) gain   = atoi(argv[++i]); else err = 1; }
 		else if (!strcasecmp(param, "-h") || !strcasecmp(param, "--help"))        { help(argv[0]); return 1; }
@@ -688,6 +691,8 @@ int main(int argc, const char **argv)
 		vfgs_init_afgs1(&afgs1);
 	else
 		vfgs_init_sei(&sei);
+	if (seed)
+		vfgs_set_seed(seed);
 
 	yuv_alloc(width, height, depth, format, &frame);
 	if (odepth < depth)
