@@ -37,13 +37,15 @@
 
 import configparser
 import tkinter as tk
-from tkinter import (ttk, Menu, filedialog as fd)
+from tkinter import (ttk, Menu, simpledialog, filedialog as fd)
 import matplotlib
 import numpy as np
+import scipy.ndimage
 import ctypes.wintypes
 import math
 from math import log2
 import os
+import re
 
 matplotlib.use('TkAgg')
 from matplotlib.figure import Figure
@@ -230,6 +232,7 @@ def read_yuv(filename, frame=0, width=1920, height=1080, bits=8, format=420):
 	# TODO: detect 422
 	# Fallback: ask user
 	t = 'uint16' if bits==10 else 'uint8'
+	b = 2 if bits==10 else 1
 	if format==400:
 		cwidth = cheight = 0
 		U = V = []
@@ -240,13 +243,64 @@ def read_yuv(filename, frame=0, width=1920, height=1080, bits=8, format=420):
 	csize = cwidth * cheight
 	psize = ysize + 2*csize
 	offset = frame * psize
-	Y = np.fromfile(filename, dtype=t, count=width*height, offset=offset).reshape(height,width)
+	Y = np.fromfile(filename, dtype=t, count=ysize, offset=offset*b).reshape(height,width)
 	if cwidth:
-		U = np.fromfile(filename, dtype=t, count=cwidth*cheight, offset=offset+ysize).reshape(cheight,cwidth)
-		V = np.fromfile(filename, dtype=t, count=cwidth*cheight, offset=offset+ysize+csize).reshape(cheight,cwidth)
+		U = np.fromfile(filename, dtype=t, count=csize, offset=(offset+ysize)*b).reshape(cheight,cwidth)
+		V = np.fromfile(filename, dtype=t, count=csize, offset=(offset+ysize+csize)*b).reshape(cheight,cwidth)
 	return Y,U,V
 
+def yuv444(Y, U, V):
+	''' upscale chroma to luma size '''
+	# Chroma upscale : horizontal (cosited)
+	if 2*np.shape(U)[1] == np.shape(Y)[1]:
+		f = np.sinc(np.arange(-1.5,1.5))
+		f /= np.sum(f)
+		sz = list(U.shape)
+		sz[1] *= 2
+		U = np.reshape(np.vstack((U, scipy.ndimage.correlate1d(U, f, axis=1, mode="nearest"))), sz, order='F')
+		V = np.reshape(np.vstack((V, scipy.ndimage.correlate1d(V, f, axis=1, mode="nearest"))), sz, order='F')
+
+	# Chroma upscale : vertical (midpoint)
+	if 2*np.shape(U)[0] == np.shape(Y)[0]:
+		f = np.sinc(np.arange(-1.75,1.25))
+		f = np.append(f,0)
+		f /= np.sum(f)
+		sz = list(U.shape)
+		sz[0] *= 2
+		U = np.reshape(np.hstack((scipy.ndimage.correlate1d(U, f, axis=0, mode="nearest"), scipy.ndimage.correlate1d(U, np.flip(f), axis=0, mode="nearest"))), sz, order='C')
+		V = np.reshape(np.hstack((scipy.ndimage.correlate1d(V, f, axis=0, mode="nearest"), scipy.ndimage.correlate1d(V, np.flip(f), axis=0, mode="nearest"))), sz, order='C')
+
+	return Y, U, V
+
 def yuv2rgb(Y, U, V):
+	''' convert YUV to RGB '''
+	# 1. Convert Y,U,V to full scale
+	bits = 10 if Y.itemsize > 1 else 8
+	D = 2**(bits-8)
+	FR = 0 # not full range (= limited range, as usual for video)
+	signed = False # chroma unsigned as usual
+	Yrng = (219 + 36*FR)*D
+	Yblk = (16 - 16*FR)*D
+	Crng = (224 + 32*FR)*D
+	Cmid = (128)*D if not signed else 0
+
+	Y = (Y.astype(float) - Yblk) / Yrng
+	U = (U.astype(float) - Cmid) / Crng
+	V = (V.astype(float) - Cmid) / Crng
+
+	# 2. Upscale chroma to luma resolution, taking care of luma/chroma alignment (by default: horizontal colocated, vertical centered)
+	Y, U, V = yuv444(Y, U, V)
+
+	# 3. Apply BT.709 matrix (no conversion of colors primaries or transfer function, no tone mapping)
+	R = Y             + 1.57480*V
+	G = Y - 0.18732*U - 0.46812*V
+	B = Y + 1.85560*U
+	rgb = np.stack((R, G, B),axis=2)
+
+	# 4. clip
+	rgb = np.clip(rgb, 0, 1)
+
+	# Done. [note: dither defore display ?]
 	return rgb
 
 def get_monitors_info():
@@ -271,7 +325,7 @@ def get_monitors_info():
 	return monitors
 
 class Preview(tk.Toplevel):
-	def __init__(self, parent, filename, frame=0):
+	def __init__(self, parent, clean_yuv):
 		super().__init__(parent)
 		self.title('Preview')
 		self.fullscreen = False
@@ -284,10 +338,10 @@ class Preview(tk.Toplevel):
 		self.figure_canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
 		self.figure_canvas.mpl_connect('button_press_event', self.on_press)
 
-		self.clean_name = filename
-		self.frame = frame
-		self.mode = 0
-		self.regrain()
+		self.clean_yuv = clean_yuv
+		self.clean_rgb = yuv2rgb(*clean_yuv)
+		self.mode = 3 # TODO add a param ?
+		self.regrain(clean_yuv)
 
 	def on_press(self, event):
 		if event.inaxes and event.dblclick:
@@ -314,12 +368,9 @@ class Preview(tk.Toplevel):
 				#self.attributes("-fullscreen", True)
 				self.fullscreen = True
 
-	def regrain(self, gain=100):
-		self.clean_yuv = read_yuv(self.clean_name, self.frame)
-		# call vfgs using cfg
-		# cfg.save(__preview.cfg)
-		# vfgs -w {width} -h {height} -b {bits} --outdepth 8 -n 1 -s {frame} -g {gain} -c __preview.cfg {self.clean_name} __preview.yuv
-		self.grain_yuv = self.clean_yuv
+	def regrain(self, grain_yuv):
+		self.grain_yuv = grain_yuv
+		self.grain_rgb = yuv2rgb(*grain_yuv)
 		self.imshow()
 
 	def imshow(self):
@@ -331,13 +382,89 @@ class Preview(tk.Toplevel):
 		elif self.mode==2:
 			self.axes.imshow(V, cmap='gray')
 		else:
-			self.axes.imshow(yuv2rgb(Y,U,V))
+			self.axes.imshow(self.grain_rgb)
 		# also consider clean/grainy
 		self.figure_canvas.draw()
 
 	def setmode(self, mode):
 		self.mode = mode
 		self.imshow()
+
+#	def resize(zoom=1.0):
+		# picture size
+		# canvas/x size
+		# change xy range ?
+		# - if pic size smaller than canvas, center
+		# - if not, center too (provide pivot point)
+
+# ------------------------------------------------------------------------------
+# Dialog: YUV file properties
+# ------------------------------------------------------------------------------
+
+class AskYuvInfo(tk.simpledialog.Dialog):
+	def __init__(self, master, **kwargs):
+		# parse text param, then override with explicit params
+		width = height = depth = format = None;
+		if 'text' in kwargs:
+			text = kwargs.pop('text');
+			m = re.search('\d{2,4}x\d{2,4}', text)
+			if m:
+				m = m.group().split('x')
+				width = int(m[0])
+				height = int(m[1])
+			m = re.search('\d{1,2}(b[^A-Za-z0-9]?|bits)', text)
+			if m:
+				m = m.group().split('b')
+				depth = int(m[0])
+			m = re.search('[^A-Za-z0-9]?(420|422|444)p?[^A-za-z0-9]?', text)
+			if m:
+				format = int(m.group()[1:4])
+		# default values
+		if 'width'  in kwargs: width  = kwargs.pop('width')
+		if not width         : width  = 1920
+		if 'height' in kwargs: height = kwargs.pop('height')
+		if not height        : height = 1080
+		if 'depth'  in kwargs: depth  = kwargs.pop('depth')
+		if not depth         : depth  = 8
+		if 'format' in kwargs: format = kwargs.pop('format')
+		if not format        : format = 420
+
+		# init
+		self.width = 0 # detect cancel
+		self.__width  = tk.StringVar(value=width)
+		self.__height = tk.StringVar(value=height)
+		self.__depth  = tk.StringVar(value=depth)
+		self.__format = tk.StringVar(value=format)
+		tk.simpledialog.Dialog.__init__(self,master,**kwargs)
+
+	def body(self, master):
+		ttk.Label(master,text='Width',anchor="e").grid(column=0,row=0, sticky='swe')
+		l = ttk.Combobox(master,values=['720','1280','1440','1920','2560','2880','3840'],textvariable=self.__width,width=10)
+		l.grid(column=1,row=0, sticky='swe',padx=5)
+
+		ttk.Label(master,text='Height',anchor="e").grid(column=0,row=1, sticky='swe')
+		ttk.Combobox(master,values=['640','576','720','1080','1440','2160'],textvariable=self.__height,width=10).grid(column=1,row=1, sticky='swe',padx=5)
+
+		ttk.Label(master,text='Bit depth',anchor="e").grid(column=0,row=2, sticky='swe')
+		ttk.Combobox(master,values=['8','10'],textvariable=self.__depth,width=10).grid(column=1,row=2, sticky='swe',padx=5)
+
+		ttk.Label(master,text='Chroma format',anchor="e").grid(column=0,row=3, sticky='swe')
+		ttk.Combobox(master,state='readonly',values=['420','422','444'],textvariable=self.__format,width=10).grid(column=1,row=3, sticky='swe',padx=5)
+
+		master.columnconfigure(0, weight=1, pad=5)
+		master.columnconfigure(1, weight=1)
+		master.rowconfigure(0, pad=5)
+		master.rowconfigure(1, pad=3)
+		master.rowconfigure(2, pad=3)
+		master.rowconfigure(3, pad=3)
+
+		return l # return widget that should have initial focus.
+
+	def apply(self):
+		self.width  = int(self.__width .get())
+		self.height = int(self.__height.get())
+		self.depth  = int(self.__depth .get())
+		self.format = int(self.__format.get())
 
 # ------------------------------------------------------------------------------
 # Main app: interactive plot
@@ -471,16 +598,23 @@ class App(tk.Tk):
 
 	def on_load_yuv_clean(self):
 		self.yuvname = fd.askopenfilename(title="Choose YUV file (clean/compressed)",filetype=[('YUV files','.yuv'),('all files','.*')])
+		self.yuvsize = 0
 		if (self.yuvname):
-			self.yuvsize = os.path.getsize(self.yuvname)/(3110400*4)
-			self.seed = ((self.seed + 1) & 0xffffffff)
-			self.regrain()
-		else:
-			self.yuvsize = 0
+			dlg = AskYuvInfo(self,text=self.yuvname)
+			if dlg.width:
+				self.yuvinfo = [dlg.width, dlg.height, dlg.depth, dlg.format]
+				self.yuv_clean = read_yuv(self.yuvname, self.frame.get(), *self.yuvinfo)
+				psize = self.yuv_clean[0].size + self.yuv_clean[1].size + self.yuv_clean[2].size
+				psize *= self.yuv_clean[0].itemsize
+				self.yuvsize = os.path.getsize(self.yuvname)/psize
+				self.seed = ((self.seed + 1) & 0xffffffff)
+				#preview = Preview(self, self.yuv_clean); # TODO: just update if already open !
+				self.regrain()
+			else:
+				self.yuvname= []
+
 		# update slide 3 dimension
 		self.scale3.configure(to=self.yuvsize - 1);
-#		if (filename):
-#			preview = Preview(self, filename, 100);
 
 	# Mouse click: pick some items to be dragged
 	def on_press(self, event):
@@ -533,7 +667,7 @@ class App(tk.Tk):
 					picked = [k for k in picked if k in picked_I]
 				self.picked_F =  picked
 
-			# TODO: when testing on YUV, special click to disable interval (= additional 'enable' data in self)
+			# Record which interval is clicked (special click to disable interval, see on_release() for right click = toggle an 'enable' flag)
 			self.picked_k = [k for k,a in enumerate(self.linesG) if event.xdata >= a.get_xdata()[0] and event.xdata < a.get_xdata()[1]][0:1]
 
 			# Double-click in a interval --> split
@@ -628,7 +762,7 @@ class App(tk.Tk):
 	def regrain(self):
 		if (self.yuvname):
 			cfg.save('__preview.cfg',mask=True);
-			os.system(f'vfgs -w 3840 -h 2160 -b 8 --outdepth 8 -n 1 -s {self.frame.get()} -r {self.seed} -g {cfg.gain} -c __preview.cfg {self.yuvname} __preview_3840x2160_8b.yuv')
+			os.system(f'vfgs -w {self.yuvinfo[0]} -h {self.yuvinfo[1]} -b {self.yuvinfo[2]} --outdepth 8 -n 1 -s {self.frame.get()} -r {self.seed} -g {cfg.gain} -c __preview.cfg {self.yuvname} __preview_{self.yuvinfo[0]}x{self.yuvinfo[1]}_8b.yuv')
 
 	# Update plot from cfg
 	def update_plot(self, c):

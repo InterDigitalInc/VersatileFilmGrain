@@ -42,6 +42,7 @@ Usage: vfgs [options] <input.yuv> <output.yuv>
    -f,--format   <value>     Chroma format (420/422/444) [420]
    -n,--frames   <value>     Number of frames to process (0=all) [0]
    -s,--seek     <value>     Picture start index within input file [0]
+   -r,--seed     <value>     Random seed
    -c,--cfg      <filename>  Read film grain configuration file
    -g,--gain     <value>     Apply a global scale (in percent) to grain strength
    --help                    Display this page
