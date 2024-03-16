@@ -253,22 +253,21 @@ def yuv444(Y, U, V):
 	''' upscale chroma to luma size '''
 	# Chroma upscale : horizontal (cosited)
 	if 2*np.shape(U)[1] == np.shape(Y)[1]:
-		f = np.sinc(np.arange(-1.5,1.5))
+		f = np.sinc(np.arange(-1.5,1.6))
 		f /= np.sum(f)
 		sz = list(U.shape)
 		sz[1] *= 2
-		U = np.reshape(np.vstack((U, scipy.ndimage.correlate1d(U, f, axis=1, mode="nearest"))), sz, order='F')
-		V = np.reshape(np.vstack((V, scipy.ndimage.correlate1d(V, f, axis=1, mode="nearest"))), sz, order='F')
+		U = np.reshape(np.vstack((U, scipy.ndimage.convolve1d(U, f, axis=1, mode="nearest"))), sz, order='F')
+		V = np.reshape(np.vstack((V, scipy.ndimage.convolve1d(V, f, axis=1, mode="nearest"))), sz, order='F')
 
 	# Chroma upscale : vertical (midpoint)
 	if 2*np.shape(U)[0] == np.shape(Y)[0]:
-		f = np.sinc(np.arange(-1.75,1.25))
-		f = np.append(f,0)
+		f = np.append(0,np.sinc(np.arange(-1.25,1.76)))
 		f /= np.sum(f)
 		sz = list(U.shape)
 		sz[0] *= 2
-		U = np.reshape(np.hstack((scipy.ndimage.correlate1d(U, f, axis=0, mode="nearest"), scipy.ndimage.correlate1d(U, np.flip(f), axis=0, mode="nearest"))), sz, order='C')
-		V = np.reshape(np.hstack((scipy.ndimage.correlate1d(V, f, axis=0, mode="nearest"), scipy.ndimage.correlate1d(V, np.flip(f), axis=0, mode="nearest"))), sz, order='C')
+		U = np.reshape(np.hstack((scipy.ndimage.convolve1d(U, f, axis=0, mode="nearest"), scipy.ndimage.convolve1d(U, np.flip(f), axis=0, mode="nearest"))), sz, order='C')
+		V = np.reshape(np.hstack((scipy.ndimage.convolve1d(V, f, axis=0, mode="nearest"), scipy.ndimage.convolve1d(V, np.flip(f), axis=0, mode="nearest"))), sz, order='C')
 
 	return Y, U, V
 
@@ -325,22 +324,28 @@ def get_monitors_info():
 	return monitors
 
 class Preview(tk.Toplevel):
+	# TODO: rewrite with something faster than matplotlib/imshow (directly use PIL + tkinter ?)
 	def __init__(self, parent, clean_yuv):
 		super().__init__(parent)
 		self.title('Preview')
 		self.fullscreen = False
+		self.clean_yuv = clean_yuv
+		self.clean_rgb = yuv2rgb(*clean_yuv)
+		self.mode = 3 # TODO add a param ?
+		self.zoom = 1.0
 
 		figure = Figure(figsize=(6, 4), dpi=100)
 		self.figure_canvas = FigureCanvasTkAgg(figure, self)
 		self.axes = figure.add_axes((0,0,1,1))
 		self.axes.axis(False)
-		#self.axes.axis([0,600,400,0]) # no zoom --> size of figure
 		self.figure_canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
 		self.figure_canvas.mpl_connect('button_press_event', self.on_press)
+		self.figure_canvas.mpl_connect('resize_event', self.on_resize)
+		self.figure_canvas.mpl_connect('scroll_event', self.on_scroll)
+		#self.figure_canvas.mpl_connect('button_press_event', self.on_press)
+		#self.figure_canvas.mpl_connect('motion_notify_event', self.on_motion)
+		#self.figure_canvas.mpl_connect('button_release_event', self.on_release)
 
-		self.clean_yuv = clean_yuv
-		self.clean_rgb = yuv2rgb(*clean_yuv)
-		self.mode = 3 # TODO add a param ?
 		self.regrain(clean_yuv)
 
 	def on_press(self, event):
@@ -368,6 +373,29 @@ class Preview(tk.Toplevel):
 				#self.attributes("-fullscreen", True)
 				self.fullscreen = True
 
+	def on_resize(self, event):
+		self.resize()
+
+	def on_scroll(self, event):
+		zoom = self.zoom
+		if event.step > 0:
+			if zoom >= 1.0:
+				zoom += 1
+			else:
+				zoom = 1/(1/zoom - 1)
+		else:
+			if zoom > 1.0:
+				zoom -= 1
+			else:
+				zoom = 1/(1/zoom + 1)
+		zoom = np.clip(zoom, 1/4, 4)
+		if zoom != self.zoom:
+			self.zoom = zoom
+			self.resize() # TODO: center = event.xdata/ydata
+			self.figure_canvas.draw()
+
+	# TODO: drag = move picture
+
 	def regrain(self, grain_yuv):
 		self.grain_yuv = grain_yuv
 		self.grain_rgb = yuv2rgb(*grain_yuv)
@@ -377,25 +405,42 @@ class Preview(tk.Toplevel):
 		Y, U, V = self.grain_yuv
 		if self.mode==0:
 			self.axes.imshow(Y, cmap='gray')
+			self.imsize = np.flip(np.shape(Y))
 		elif self.mode==1:
 			self.axes.imshow(U, cmap='gray')
+			self.imsize = np.flip(np.shape(U))
 		elif self.mode==2:
 			self.axes.imshow(V, cmap='gray')
+			self.imsize = np.flip(np.shape(V))
 		else:
 			self.axes.imshow(self.grain_rgb)
+			self.imsize = np.flip(np.shape(Y))
 		# also consider clean/grainy
+		self.resize()
 		self.figure_canvas.draw()
 
 	def setmode(self, mode):
 		self.mode = mode
 		self.imshow()
 
-#	def resize(zoom=1.0):
-		# picture size
-		# canvas/x size
+	def resize(self):
+		dpi = 100
+		bbox = self.axes.figure.get_window_extent()
+		bbox = np.array([bbox.width,bbox.height])
+		center = self.imsize/2 # TODO: if any width/height*zoom < bbox, force center
+		offset = center - bbox/(2*self.zoom)
+		self.axes.set_xlim(np.array([0,bbox[0]])/self.zoom-0.5+offset[0])
+		self.axes.set_ylim(np.array([bbox[1],0])/self.zoom-0.5+offset[1])
+
+		if (self.zoom == 1.0):
+			self.title('Preview')
+		else:
+			self.title(f"Preview (zoom {round(self.zoom*100)} %)")
+
 		# change xy range ?
 		# - if pic size smaller than canvas, center
 		# - if not, center too (provide pivot point)
+		# interpolation='nearest' (zoom-in) ?
 
 # ------------------------------------------------------------------------------
 # Dialog: YUV file properties
@@ -404,21 +449,19 @@ class Preview(tk.Toplevel):
 class AskYuvInfo(tk.simpledialog.Dialog):
 	def __init__(self, master, **kwargs):
 		# parse text param, then override with explicit params
-		width = height = depth = format = None;
+		width = height = depth = format = dither = None;
 		if 'text' in kwargs:
-			text = kwargs.pop('text');
-			m = re.search('\d{2,4}x\d{2,4}', text)
+			text = kwargs.pop('text')
+			m = re.search('(\d{2,4})x(\d{2,4})', text)
 			if m:
-				m = m.group().split('x')
-				width = int(m[0])
-				height = int(m[1])
-			m = re.search('\d{1,2}(b[^A-Za-z0-9]?|bits)', text)
+				width = int(m.group(1))
+				height = int(m.group(2))
+			m = re.search('(\d{1,2})(b[^A-Za-z0-9]?|bits)', text)
 			if m:
-				m = m.group().split('b')
-				depth = int(m[0])
-			m = re.search('[^A-Za-z0-9]?(420|422|444)p?[^A-za-z0-9]?', text)
+				depth = int(m.group(1))
+			m = re.search('[^A-Za-z0-9]?P?(420|422|444)p?[^A-za-z0-9]?', text);
 			if m:
-				format = int(m.group()[1:4])
+				format = int(m.group(1))
 		# default values
 		if 'width'  in kwargs: width  = kwargs.pop('width')
 		if not width         : width  = 1920
@@ -428,6 +471,8 @@ class AskYuvInfo(tk.simpledialog.Dialog):
 		if not depth         : depth  = 8
 		if 'format' in kwargs: format = kwargs.pop('format')
 		if not format        : format = 420
+		if 'dither' in kwargs: format = kwargs.pop('dither')
+		if not format        : format = False
 
 		# init
 		self.width = 0 # detect cancel
@@ -435,6 +480,7 @@ class AskYuvInfo(tk.simpledialog.Dialog):
 		self.__height = tk.StringVar(value=height)
 		self.__depth  = tk.StringVar(value=depth)
 		self.__format = tk.StringVar(value=format)
+		self.__dither = tk.IntVar(value=dither)
 		tk.simpledialog.Dialog.__init__(self,master,**kwargs)
 
 	def body(self, master):
@@ -451,12 +497,15 @@ class AskYuvInfo(tk.simpledialog.Dialog):
 		ttk.Label(master,text='Chroma format',anchor="e").grid(column=0,row=3, sticky='swe')
 		ttk.Combobox(master,state='readonly',values=['420','422','444'],textvariable=self.__format,width=10).grid(column=1,row=3, sticky='swe',padx=5)
 
+		ttk.Checkbutton(master,text='Force 8-bit output',variable=self.__dither,onvalue=1,offvalue=0).grid(column=0, row=4,columnspan=2, sticky='s')
+
 		master.columnconfigure(0, weight=1, pad=5)
 		master.columnconfigure(1, weight=1)
 		master.rowconfigure(0, pad=5)
 		master.rowconfigure(1, pad=3)
 		master.rowconfigure(2, pad=3)
 		master.rowconfigure(3, pad=3)
+		master.rowconfigure(4, pad=3)
 
 		return l # return widget that should have initial focus.
 
@@ -465,6 +514,7 @@ class AskYuvInfo(tk.simpledialog.Dialog):
 		self.height = int(self.__height.get())
 		self.depth  = int(self.__depth .get())
 		self.format = int(self.__format.get())
+		self.dither = int(self.__dither.get())
 
 # ------------------------------------------------------------------------------
 # Main app: interactive plot
@@ -485,7 +535,8 @@ class App(tk.Tk):
 		# create the figure
 		figure = Figure(figsize=(6, 4), dpi=100)
 		self.figure_canvas = FigureCanvasTkAgg(figure, self)
-		NavigationToolbar2Tk(self.figure_canvas, self, pack_toolbar=False).grid(column=0, row=0, sticky='ew', columnspan=3)
+		toolbar = NavigationToolbar2Tk(self.figure_canvas, self, pack_toolbar=False)
+		toolbar.grid(column=0, row=0, sticky='ew', columnspan=3)
 
 		# create the menubar
 		menubar = Menu(self)
@@ -518,12 +569,12 @@ class App(tk.Tk):
 		self.ax2.set_ylabel('Frequency cut-off', color='tab:green')
 		self.ax2.tick_params(axis='y', labelcolor='tab:green')
 
-		self.update_plot(0)
+		# Update plot (from config)
+		self.update_plot(self.color_component.get())
 
 		self.figure_canvas.mpl_connect('button_press_event', self.on_press)
 		self.figure_canvas.mpl_connect('motion_notify_event', self.on_motion)
 		self.figure_canvas.mpl_connect('button_release_event', self.on_release)
-#		self.figure_canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
 		self.figure_canvas.get_tk_widget().grid(column=0, row=1,columnspan=3, sticky='nswe')
 
 		# sliders
@@ -548,8 +599,6 @@ class App(tk.Tk):
 		self.scale3.grid(column=2, row=4, sticky='we',padx=5,pady=5) # TODO: snap
 
 		# TODO: align widgets & plot background color
-
-		self.update_plot(0)
 
 	def slider1_changed(self, event):
 		x = self.log2_scale_factor.get()
@@ -602,8 +651,8 @@ class App(tk.Tk):
 		if (self.yuvname):
 			dlg = AskYuvInfo(self,text=self.yuvname)
 			if dlg.width:
-				self.yuvinfo = [dlg.width, dlg.height, dlg.depth, dlg.format]
-				self.yuv_clean = read_yuv(self.yuvname, self.frame.get(), *self.yuvinfo)
+				self.yuvinfo = [dlg.width, dlg.height, dlg.depth, dlg.format, dlg.dither]
+				self.yuv_clean = read_yuv(self.yuvname, self.frame.get(), *self.yuvinfo[:-2])
 				psize = self.yuv_clean[0].size + self.yuv_clean[1].size + self.yuv_clean[2].size
 				psize *= self.yuv_clean[0].itemsize
 				self.yuvsize = os.path.getsize(self.yuvname)/psize
@@ -722,14 +771,21 @@ class App(tk.Tk):
 	# Mouse release: update cfg (for split), update plot (for split & merge)
 	def on_release(self, event):
 		c = self.color_component.get()
-		if (self.picked_split):
-			cfg.split(0, self.picked_k[0], self.picked_split[0])
+		n = cfg.num_intensity_intervals[c]
+		if self.picked_split:
+			cfg.split(c, self.picked_k[0], self.picked_split[0])
 			self.picked_split = []
 		elif not self.picked and self.picked_k and event.button is MouseButton.RIGHT:
 			k = self.picked_k[0]
 			cfg.enable[c][k] = not cfg.enable[c][k]
 			self.picked_k = []
 			self.regrain()
+		elif self.picked and cfg.num_intensity_intervals[c] < len(cfg.enable[c]):
+			# Finish cleaning up the config if an interval has been collapsed
+			del cfg.intensity_interval_lower_bound[c][n:]
+			del cfg.intensity_interval_upper_bound[c][n:]
+			del cfg.comp_model_value[c][n:]
+			del cfg.enable[c][n:]
 
 		self.picked = []
 		self.update_plot(c)
@@ -754,15 +810,12 @@ class App(tk.Tk):
 				i += 1
 
 		cfg.num_intensity_intervals[c] = i
-		del cfg.intensity_interval_lower_bound[c][i:]
-		del cfg.intensity_interval_upper_bound[c][i:]
-		del cfg.comp_model_value[c][i:]
-		del cfg.enable[c][i:]
 
 	def regrain(self):
 		if (self.yuvname):
 			cfg.save('__preview.cfg',mask=True);
-			os.system(f'vfgs -w {self.yuvinfo[0]} -h {self.yuvinfo[1]} -b {self.yuvinfo[2]} --outdepth 8 -n 1 -s {self.frame.get()} -r {self.seed} -g {cfg.gain} -c __preview.cfg {self.yuvname} __preview_{self.yuvinfo[0]}x{self.yuvinfo[1]}_8b.yuv')
+			outdepth = 8 if self.yuvinfo[4] else self.yuvinfo[2]
+			os.system(f'vfgs -w {self.yuvinfo[0]} -h {self.yuvinfo[1]} -b {self.yuvinfo[2]} --outdepth {outdepth} -f {self.yuvinfo[3]} -n 1 -s {self.frame.get()} -r {self.seed} -g {cfg.gain} -c __preview.cfg {self.yuvname} __preview_{self.yuvinfo[0]}x{self.yuvinfo[1]}_{self.yuvinfo[3]}_{outdepth}b.yuv')
 
 	# Update plot from cfg
 	def update_plot(self, c):
