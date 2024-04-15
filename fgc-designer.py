@@ -5,7 +5,7 @@
 # and contributor rights, including patent rights, and no such rights are
 # granted under this license.
 #
-# Copyright (c) 2022-2023, InterDigital
+# Copyright (c) 2022-2024, InterDigital
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without modification,
@@ -299,7 +299,7 @@ def yuv2rgb(Y, U, V):
 	# 4. clip
 	rgb = np.clip(rgb, 0, 1)
 
-	# Done. [note: dither defore display ?]
+	# Done.
 	return rgb
 
 def get_monitors_info():
@@ -325,16 +325,16 @@ def get_monitors_info():
 
 class Preview(tk.Toplevel):
 	# TODO: rewrite with something faster than matplotlib/imshow (directly use PIL + tkinter ?)
-	def __init__(self, parent, clean_yuv):
+	def __init__(self, parent):
 		super().__init__(parent)
 		self.title('Preview')
 		self.fullscreen = False
-		self.clean_yuv = clean_yuv
-		self.clean_rgb = yuv2rgb(*clean_yuv)
-		self.mode = 3 # TODO add a param ?
+		self.mode = 0 # TODO add a param ?
 		self.zoom = 1.0
+		self.center = np.array([])
+		self.dragging = False
 
-		figure = Figure(figsize=(6, 4), dpi=100)
+		figure = Figure(figsize=(6, 4), dpi=100, facecolor='black')
 		self.figure_canvas = FigureCanvasTkAgg(figure, self)
 		self.axes = figure.add_axes((0,0,1,1))
 		self.axes.axis(False)
@@ -342,41 +342,72 @@ class Preview(tk.Toplevel):
 		self.figure_canvas.mpl_connect('button_press_event', self.on_press)
 		self.figure_canvas.mpl_connect('resize_event', self.on_resize)
 		self.figure_canvas.mpl_connect('scroll_event', self.on_scroll)
-		#self.figure_canvas.mpl_connect('button_press_event', self.on_press)
-		#self.figure_canvas.mpl_connect('motion_notify_event', self.on_motion)
-		#self.figure_canvas.mpl_connect('button_release_event', self.on_release)
+		self.figure_canvas.mpl_connect('button_press_event', self.on_press)
+		self.figure_canvas.mpl_connect('motion_notify_event', self.on_motion)
+		self.figure_canvas.mpl_connect('button_release_event', self.on_release)
 
-		self.regrain(clean_yuv)
+		self.grain_img = None
+
+	def destroy(self):
+		self.master.yuvname = []
+		self.master.scale3.configure(state=tk.DISABLED, takefocus=0)
+		self.master.label3.configure(state=tk.DISABLED)
+		super().destroy()
 
 	def on_press(self, event):
-		if event.inaxes and event.dblclick:
-			# Toggle full-screen
-			if self.fullscreen:
-				#self.attributes("-fullscreen", False)
-				self.state("normal");
-				self.geometry(self.geo)
-				self.overrideredirect(False) # Full screen without decorations
-				self.fullscreen = False
+		if event.inaxes and event.button is MouseButton.LEFT:
+			if event.dblclick:
+				#self.center = np.array([])
+				# Toggle full-screen
+				if self.fullscreen:
+					#self.attributes("-fullscreen", False)
+					self.state("normal")
+					self.geometry(self.geo)
+					self.overrideredirect(False) # Full screen without decorations
+					self.fullscreen = False
+				else:
+					self.geo = self.winfo_geometry()
+					[x,y] = [int(self.winfo_x()), int(self.winfo_y())]
+					monitors = get_monitors_info()
+					# search on which monitor we are, zoom on the same
+					for k,m in enumerate(monitors):
+						if x >= m[0] and x < m[0]+m[2] and y >= m[1] and y < m[1]+m[3]:
+							break
+					if k >= len(monitors):
+						k = 0
+					self.geometry(f"{monitors[k][2]}x{monitors[k][3]}+{monitors[k][0]}+{monitors[k][1]}")
+					self.overrideredirect(True) # Full screen without decorations
+					self.state("zoomed") # Windows specific
+					#self.attributes("-fullscreen", True)
+					self.fullscreen = True
 			else:
-				self.geo = self.winfo_geometry()
-				[x,y] = [int(self.winfo_x()), int(self.winfo_y())]
-				monitors = get_monitors_info()
-				# search on which monitor we are, zoom on the same
-				for k,m in enumerate(monitors):
-					if x >= m[0] and x < m[0]+m[2] and y >= m[1] and y < m[1]+m[3]:
-						break
-				if k >= len(monitors):
-					k = 0
-				self.geometry(f"{monitors[k][2]}x{monitors[k][3]}+{monitors[k][0]}+{monitors[k][1]}")
-				self.overrideredirect(True) # Full screen without decorations
-				self.state("zoomed") # Windows specific
-				#self.attributes("-fullscreen", True)
-				self.fullscreen = True
+				# Drag picture
+				self.dragging = True
+				self.dragxy = np.array([event.x, -event.y])
+				self.dragc = self.center
+				xlim = self.axes.get_xlim()
+				ylim = self.axes.get_ylim()
+				self.dragmin = np.fmin(-np.array([xlim[0]+0.5, ylim[1]+0.5]), 0)
+				self.dragmax = np.fmax(self.imsize - np.array([xlim[1]+0.5, ylim[0]+0.5]), 0)
+
+	def on_motion(self, event):
+		if self.dragging:
+			drag = (self.dragxy - np.array([event.x, -event.y]))/self.zoom
+			drag = np.fmax(drag, self.dragmin)
+			drag = np.fmin(drag, self.dragmax)
+			self.center = self.dragc + drag
+			self.resize()
+			self.figure_canvas.draw()
+
+	def on_release(self, event):
+		if event.button is MouseButton.LEFT:
+			self.dragging = False
 
 	def on_resize(self, event):
 		self.resize()
 
 	def on_scroll(self, event):
+		#self.center = np.array([event.xdata, event.ydata])
 		zoom = self.zoom
 		if event.step > 0:
 			if zoom >= 1.0:
@@ -394,52 +425,63 @@ class Preview(tk.Toplevel):
 			self.resize() # TODO: center = event.xdata/ydata
 			self.figure_canvas.draw()
 
-	# TODO: drag = move picture
-
 	def regrain(self, grain_yuv):
 		self.grain_yuv = grain_yuv
-		self.grain_rgb = yuv2rgb(*grain_yuv)
+		self.grain_rgb = (yuv2rgb(*grain_yuv)*255).astype(np.uint8) # TODO: dither ?
 		self.imshow()
 
 	def imshow(self):
 		Y, U, V = self.grain_yuv
+		if self.grain_img is not None:
+			self.grain_img.remove() # TODO: use set_data instead of remove/imshow
 		if self.mode==0:
-			self.axes.imshow(Y, cmap='gray')
+			self.grain_img = self.axes.imshow(Y, cmap='gray')
 			self.imsize = np.flip(np.shape(Y))
 		elif self.mode==1:
-			self.axes.imshow(U, cmap='gray')
+			self.grain_img = self.axes.imshow(U, cmap='gray')
 			self.imsize = np.flip(np.shape(U))
 		elif self.mode==2:
-			self.axes.imshow(V, cmap='gray')
+			self.grain_img = self.axes.imshow(V, cmap='gray')
 			self.imsize = np.flip(np.shape(V))
 		else:
-			self.axes.imshow(self.grain_rgb)
+			self.grain_img = self.axes.imshow(self.grain_rgb)
 			self.imsize = np.flip(np.shape(Y))
-		# also consider clean/grainy
+		# TODO: manage luma/chroma size ratio (e.g. "center" and axis lim updates)
+		# --> upscale everything ?
 		self.resize()
 		self.figure_canvas.draw()
 
+		# TODO: split view
+
 	def setmode(self, mode):
-		self.mode = mode
-		self.imshow()
+		if mode != self.mode:
+			self.mode = mode
+			self.imshow()
 
 	def resize(self):
 		dpi = 100
 		bbox = self.axes.figure.get_window_extent()
-		bbox = np.array([bbox.width,bbox.height])
-		center = self.imsize/2 # TODO: if any width/height*zoom < bbox, force center
-		offset = center - bbox/(2*self.zoom)
-		self.axes.set_xlim(np.array([0,bbox[0]])/self.zoom-0.5+offset[0])
-		self.axes.set_ylim(np.array([bbox[1],0])/self.zoom-0.5+offset[1])
+		bbox = np.array([bbox.width,bbox.height])/self.zoom
+		if len(self.center) < 2:
+			self.center = self.imsize / 2 - 0.5
+		center = self.center
+		# clip center to allowable margins
+		center = np.fmax(center, bbox/2 - 0.5)
+		center = np.fmin(center, self.imsize - bbox/2 - 0.5)
+		# if imsize < bbox, hard center
+		if self.imsize[0] <= bbox[0]:
+			center[0] = self.imsize[0]/2 - 0.5
+		if self.imsize[1] <= bbox[1]:
+			center[1] = self.imsize[1]/2 - 0.5
+		offset = center - bbox/2
+		self.axes.set_xlim(np.array([0,bbox[0]])-0.5+offset[0])
+		self.axes.set_ylim(np.array([bbox[1],0])-0.5+offset[1])
 
 		if (self.zoom == 1.0):
 			self.title('Preview')
 		else:
 			self.title(f"Preview (zoom {round(self.zoom*100)} %)")
 
-		# change xy range ?
-		# - if pic size smaller than canvas, center
-		# - if not, center too (provide pivot point)
 		# interpolation='nearest' (zoom-in) ?
 
 # ------------------------------------------------------------------------------
@@ -528,7 +570,8 @@ class App(tk.Tk):
 		self.picked_k = []
 		self.seed = 0xdeadbeef
 		self.yuvname = []
-		self.frame = tk.IntVar(value=0)
+		self.__frame = tk.IntVar(value=0)
+		self.frame = 0
 
 		self.title('FGC SEI designer [draft]')
 
@@ -553,10 +596,13 @@ class App(tk.Tk):
 		menubar.add_cascade(label="File", menu=file_menu, underline=0)
 		# color component menu
 		self.color_component = tk.IntVar(value=0)
+		self.color_view = tk.BooleanVar(value=False)
 		color_menu = Menu(menubar, tearoff=0)
 		color_menu.add_radiobutton(label='Luma', underline=0, variable=self.color_component, value=0, command=self.on_color_component)
 		color_menu.add_radiobutton(label='Cb', underline=1, variable=self.color_component, value=1, command=self.on_color_component) # TODO: "radio" style
 		color_menu.add_radiobutton(label='Cr', underline=1, variable=self.color_component, value=2, command=self.on_color_component)
+		color_menu.add_separator()
+		color_menu.add_checkbutton(label='RGB view', underline=1, variable=self.color_view, command=self.on_color_component)
 		menubar.add_cascade(label="Color component", menu=color_menu, underline=0)
 
 		# create axes
@@ -593,12 +639,17 @@ class App(tk.Tk):
 		ttk.Scale(self, from_=-1, to=1, variable=self.gain, command=self.slider2_changed).grid(column=2, row=3, sticky='we',padx=5,pady=5) # TODO: snap
 
 		ttk.Label(self,text='YUV frame').grid(column=0, row=4, sticky='w',padx=5)
-		self.label3 = ttk.Label(self, text=f'{self.frame.get()}', width=3, anchor="e")
+		self.label3 = ttk.Label(self, text=f'{self.__frame.get()}', width=3, anchor="e", state=tk.DISABLED)
 		self.label3.grid(column=1, row=4, sticky='e',padx=5)
-		self.scale3 = ttk.Scale(self, from_=0, to=0, variable=self.frame, command=self.slider3_changed)
+		self.scale3 = ttk.Scale(self, from_=0, to=0, variable=self.__frame, command=self.slider3_changed, state=tk.DISABLED, takefocus=0)
 		self.scale3.grid(column=2, row=4, sticky='we',padx=5,pady=5) # TODO: snap
 
 		# TODO: align widgets & plot background color
+
+	def destroy(self):
+		#if self.yuvname:
+		#	self.yuvview.destroy()
+		super().destroy()
 
 	def slider1_changed(self, event):
 		x = self.log2_scale_factor.get()
@@ -617,14 +668,22 @@ class App(tk.Tk):
 			self.regrain()
 
 	def slider3_changed(self, event):
-		self.label3.configure(text=f'{self.frame.get()}')
-		self.seed = ((self.seed + 1) & 0xffffffff)
-		self.regrain()
+		n = self.__frame.get()
+		if (n != self.frame):
+			self.frame = n
+			self.label3.configure(text=f'{n}')
+			self.seed = ((self.seed + 1) & 0xffffffff)
+			self.regrain()
+
+	# TODO: reseed (and regrain) by hitting "space" key
 
 	# Select color component
 	def on_color_component(self):
 		self.update_plot(self.color_component.get())
 		self.figure_canvas.draw()
+		if (self.yuvname):
+			c = 3 if self.color_view.get() else self.color_component.get()
+			#self.yuvview.setmode(c)
 
 	def on_load_cfg(self):
 		filename = fd.askopenfilename(title="Choose an FGC SEI config file (VTM format)",filetype=[('cfg files','.cfg'),('all files','.*')])
@@ -646,24 +705,28 @@ class App(tk.Tk):
 			cfg.save(filename)
 
 	def on_load_yuv_clean(self):
+		#if self.yuvname:
+		#	self.yuvview.destroy()
 		self.yuvname = fd.askopenfilename(title="Choose YUV file (clean/compressed)",filetype=[('YUV files','.yuv'),('all files','.*')])
 		self.yuvsize = 0
 		if (self.yuvname):
 			dlg = AskYuvInfo(self,text=self.yuvname)
 			if dlg.width:
 				self.yuvinfo = [dlg.width, dlg.height, dlg.depth, dlg.format, dlg.dither]
-				self.yuv_clean = read_yuv(self.yuvname, self.frame.get(), *self.yuvinfo[:-2])
-				psize = self.yuv_clean[0].size + self.yuv_clean[1].size + self.yuv_clean[2].size
-				psize *= self.yuv_clean[0].itemsize
+				psize = dlg.width*dlg.height
+				psize = int(psize*1.5) if dlg.format==420 else psize*2 if dlg.format==422 else psize*3 if dlg.format==444 else psize
+				psize = psize if dlg.depth==8 else psize*2
 				self.yuvsize = os.path.getsize(self.yuvname)/psize
 				self.seed = ((self.seed + 1) & 0xffffffff)
-				#preview = Preview(self, self.yuv_clean); # TODO: just update if already open !
+				#self.yuvview = Preview(self) # TODO: just update if already open !
+				#self.yuvview.mode = 3 if self.color_view.get() else self.color_component.get()
 				self.regrain()
 			else:
 				self.yuvname= []
 
 		# update slide 3 dimension
-		self.scale3.configure(to=self.yuvsize - 1);
+		self.scale3.configure(to=self.yuvsize-1, state=tk.NORMAL, takefocus=1)
+		self.label3.configure(state=tk.NORMAL)
 
 	# Mouse click: pick some items to be dragged
 	def on_press(self, event):
@@ -815,7 +878,11 @@ class App(tk.Tk):
 		if (self.yuvname):
 			cfg.save('__preview.cfg',mask=True);
 			outdepth = 8 if self.yuvinfo[4] else self.yuvinfo[2]
-			os.system(f'vfgs -w {self.yuvinfo[0]} -h {self.yuvinfo[1]} -b {self.yuvinfo[2]} --outdepth {outdepth} -f {self.yuvinfo[3]} -n 1 -s {self.frame.get()} -r {self.seed} -g {cfg.gain} -c __preview.cfg {self.yuvname} __preview_{self.yuvinfo[0]}x{self.yuvinfo[1]}_{self.yuvinfo[3]}_{outdepth}b.yuv')
+			outname = f"__preview_{self.yuvinfo[0]}x{self.yuvinfo[1]}_{self.yuvinfo[3]}_{outdepth}b.yuv"
+			os.system(f'vfgs -w {self.yuvinfo[0]} -h {self.yuvinfo[1]} -b {self.yuvinfo[2]} --outdepth {outdepth} -f {self.yuvinfo[3]} -n 1 -s {self.frame} -r {self.seed} -g {cfg.gain} -c __preview.cfg {self.yuvname} {outname}')
+			yuv = read_yuv(outname, 0, *self.yuvinfo[0:2], outdepth, self.yuvinfo[3])
+			#self.yuvview.mode = 3 if self.color_view.get() else self.color_component.get()
+			#self.yuvview.regrain(yuv)
 
 	# Update plot from cfg
 	def update_plot(self, c):

@@ -3,7 +3,7 @@
  * and contributor rights, including patent rights, and no such rights are
  * granted under this license.
  *
- * Copyright (c) 2022-2023, InterDigital
+ * Copyright (c) 2022-2024, InterDigital
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -67,7 +67,10 @@ static int csuby = 2;
 static int16 grain[3][32]; // 9 bit needed because of overlap (has norm > 1)
 static uint8 scale[3][32];
 
-/** Pseudo-random number generator */
+/** Pseudo-random number generator
+ * Note: loops on the 31 MSBs, so seed should be MSB-aligned in the register
+ * (the register LSB has basically no effect since it is never fed back)
+ */
 static uint32 prng(uint32 x)
 {
 	uint32 s = ((x << 30) ^ (x << 2)) & 0x80000000;
@@ -335,7 +338,9 @@ void vfgs_set_pattern_lut(int c, uint8 lut[])
 
 void vfgs_set_seed(uint32 seed)
 {
-	rnd = rnd_up = line_rnd = line_rnd_up = seed;
+    // Note: shift left the seed as the LFSR loops on the 31 MSBs, so
+    // the LFSR register LSB has no effect on random sequence initialization
+	rnd = rnd_up = line_rnd = line_rnd_up = (seed << 1);
 }
 
 void vfgs_set_scale_shift(int shift)
