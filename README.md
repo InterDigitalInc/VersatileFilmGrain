@@ -35,17 +35,18 @@ Full help is provided when typing `vfgs --help`, with default option values indi
 ```bash
 Usage: vfgs [options] <input.yuv> <output.yuv>
 
-   -w,--width    <value>     Picture width [1920]
-   -h,--height   <value>     Picture height [1080]
-   -b,--bitdepth <value>     Input bit depth [10]
-      --outdepth <value>     Output bit depth (<= input depth) [same as input]
-   -f,--format   <value>     Chroma format (420/422/444) [420]
-   -n,--frames   <value>     Number of frames to process (0=all) [0]
-   -s,--seek     <value>     Picture start index within input file [0]
-   -r,--seed     <value>     Random seed
-   -c,--cfg      <filename>  Read film grain configuration file
-   -g,--gain     <value>     Apply a global scale (in percent) to grain strength
-   --help                    Display this page
+   -w,--width    <value>           Picture width [1920]
+   -h,--height   <value>           Picture height [1080]
+   -b,--bitdepth <value>           Input bit depth [10]
+      --outdepth <value>           Output bit depth (<= input depth) [same as input]
+   -f,--format   <value>           Chroma format (420/422/444) [420]
+   -n,--frames   <value>           Number of frames to process (0=all) [0]
+   -s,--seek     <value>           Picture start index within input file [0]
+   -r,--seed     <value>           Random seed (non-zero 31-bits number)
+   -c,--cfg      [<x>:]<filename>  Read film grain configuration file, to be applied
+                                   from frame x (defaults to 0). Multiple -c are allowed.
+   -g,--gain     <value>           Apply a global scale (in percent) to grain strength
+   --help                          Display this page
 ````
 
 ## Compilation

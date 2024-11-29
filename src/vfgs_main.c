@@ -53,6 +53,8 @@
 #define DEFAULT_FREQ 8
 #define CHECK(cond, ...) { if (!(cond)) { fprintf(stderr, "Error: "); fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); return 1; } }
 
+#define MAX_CONFIGS 64
+
 // Program parameters
 static FILE* fsrc = NULL;
 static FILE* fdst = NULL;
@@ -121,6 +123,13 @@ static fgs_afgs1 afgs1 = {
 	.num_y_points = 0,
 	// no other default values (default mode is SEI)
 };
+
+static struct {
+	int poc;
+	const char* filename;
+} config[MAX_CONFIGS];
+static int ncfg = 0;
+static int icfg = 0;
 
 static int read_array_i16(int16* x, char* s)
 {
@@ -439,6 +448,10 @@ static int read_cfg(const char* filename)
 		return 1;
 	}
 
+	afgs1.num_y_points = 0; // reset afgs1/sei detection
+	afgs1.num_cb_points = 0;
+	afgs1.num_cr_points = 0;
+
 	while (fgets(line, sizeof(line), cfg))
 	{
 		if (line[0] == '#') // remove comments (special case for 1st character)
@@ -579,20 +592,72 @@ static void apply_gain(unsigned gain)
 	}
 }
 
+static int push_cfg(const char* param)
+{
+	unsigned poc = 0;
+	char s[16];
+	const char *filename;
+	int ok = 0;
+
+	CHECK(ncfg < MAX_CONFIGS, "too many configurations (maximum is %d)", MAX_CONFIGS);
+
+	// Parse poc from param (search for :)
+	filename = strchr(param, ':');
+	if (filename)
+	{
+		int n = filename - param;
+		ok = 1;
+		for (int i=0; i<n && ok; i++)
+			ok = ok && isdigit(param[i]);
+		if (ok)
+		{
+			CHECK(n < 16, "illegal configuration POC");
+			strncpy(s, param, n);
+			poc = atoi(s);
+			CHECK(poc >= 0, "illegal configuration POC (must be positive)");
+			filename ++; // skip ':'
+		}
+	}
+	if (!ok)
+	{
+		poc = 0;
+		filename = param;
+	}
+
+	// Store at current location
+	config[ncfg].poc = poc;
+	config[ncfg].filename = filename;
+	ncfg ++;
+
+	return 0;
+}
+
+static int pop_cfg(unsigned gain)
+{
+	CHECK(icfg < ncfg, "No configuration to pop");
+	if (read_cfg(config[icfg].filename)) return 1;
+    if (check_cfg()) return 1;
+    if (adjust_chroma_cfg()) return 1;
+    apply_gain(gain);
+	icfg ++;
+    return 0;
+}
+
 static int help(const char* name)
 {
 	printf("Usage: %s [options] <input.yuv> <output.yuv>\n\n", name);
-	printf("   -w,--width    <value>     Picture width [%d]\n", width);
-	printf("   -h,--height   <value>     Picture height [%d]\n", height);
-	printf("   -b,--bitdepth <value>     Input bit depth [%d]\n", depth);
-	printf("      --outdepth <value>     Output bit depth (<= input depth) [same as input]\n");
-	printf("   -f,--format   <value>     Chroma format (420/422/444) [%s]\n", format_str(format));
-	printf("   -n,--frames   <value>     Number of frames to process (0=all) [%d]\n", frames);
-	printf("   -s,--seek     <value>     Picture start index within input file [%d]\n", seek);
-	printf("   -r,--seed     <value>     Random seed\n", seek);
-	printf("   -c,--cfg      <filename>  Read film grain configuration file\n");
-	printf("   -g,--gain     <value>     Apply a global scale (in percent) to grain strength\n");
-	printf("   --help                    Display this page\n\n");
+	printf("   -w,--width    <value>           Picture width [%d]\n", width);
+	printf("   -h,--height   <value>           Picture height [%d]\n", height);
+	printf("   -b,--bitdepth <value>           Input bit depth [%d]\n", depth);
+	printf("      --outdepth <value>           Output bit depth (<= input depth) [same as input]\n");
+	printf("   -f,--format   <value>           Chroma format (420/422/444) [%s]\n", format_str(format));
+	printf("   -n,--frames   <value>           Number of frames to process (0=all) [%d]\n", frames);
+	printf("   -s,--seek     <value>           Picture start index within input file [%d]\n", seek);
+	printf("   -r,--seed     <value>           Random seed (non-zero 31-bits number)\n");
+	printf("   -c,--cfg      [<x>:]<filename>  Read film grain configuration file, to be applied\n");
+	printf("                                   from frame x (defaults to 0). Multiple -c are allowed.\n");
+	printf("   -g,--gain     <value>           Apply a global scale (in percent) to grain strength\n");
+	printf("   --help                          Display this page\n\n");
 	return 0;
 }
 
@@ -636,7 +701,7 @@ int main(int argc, const char **argv)
 		else if (!strcasecmp(param, "-n") || !strcasecmp(param, "--frames"))      { if (i+1 < argc) frames = atoi(argv[++i]); else err = 1; }
 		else if (!strcasecmp(param, "-s") || !strcasecmp(param, "--seek"))        { if (i+1 < argc) seek   = atoi(argv[++i]); else err = 1; }
 		else if (!strcasecmp(param, "-r") || !strcasecmp(param, "--seed"))        { if (i+1 < argc) seed   = atoi(argv[++i]); else err = 1; }
-		else if (!strcasecmp(param, "-c") || !strcasecmp(param, "--cfg"))         { if (i+1 < argc) err = read_cfg(argv[++i]); else err = 1; }
+		else if (!strcasecmp(param, "-c") || !strcasecmp(param, "--cfg"))         { if (i+1 < argc) err = push_cfg(argv[++i]); else err = 1; }
 		else if (!strcasecmp(param, "-g") || !strcasecmp(param, "--gain"))        { if (i+1 < argc) gain   = atoi(argv[++i]); else err = 1; }
 		else if (!strcasecmp(param, "-h") || !strcasecmp(param, "--help"))        { help(argv[0]); return 1; }
 		else if (param[0]!='-')
@@ -705,6 +770,15 @@ int main(int argc, const char **argv)
 	// Process frames
 	for (int n = 0; ((frames == 0) || (n < frames)) && !ferror(fsrc); n++)
 	{
+		while (icfg < ncfg && (n + seek) >= config[icfg].poc)
+		{
+			if (pop_cfg(gain))
+				break;
+			if (afgs1.num_y_points)
+				vfgs_init_afgs1(&afgs1);
+			else
+				vfgs_init_sei(&sei);
+		}
 		yuv_read(&frame, fsrc);
 		if (feof(fsrc))
 			break;
