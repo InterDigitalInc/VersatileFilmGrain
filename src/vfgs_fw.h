@@ -3,7 +3,7 @@
  * and contributor rights, including patent rights, and no such rights are
  * granted under this license.
  *
- * Copyright (c) 2022-2023, InterDigital
+ * Copyright (c) 2022-2026, InterDigital
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -88,6 +88,7 @@ typedef struct fgs_afgs1_s {
 	uint8 clip_to_restricted_range;
 } fgs_afgs1;
 
+void vfgs_init_window(float K);
 void vfgs_init_sei(fgs_sei* cfg);
 void vfgs_init_afgs1(fgs_afgs1* cfg);
 

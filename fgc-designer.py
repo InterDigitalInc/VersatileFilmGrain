@@ -501,7 +501,7 @@ class AskYuvInfo(tk.simpledialog.Dialog):
 			m = re.search('(\d{1,2})(b[^A-Za-z0-9]?|bits)', text)
 			if m:
 				depth = int(m.group(1))
-			m = re.search('[^A-Za-z0-9]?P?(420|422|444)p?[^A-za-z0-9]?', text);
+			m = re.search('[^A-Za-z0-9]?P?(420|422|444)p?[^A-Za-z0-9]?', text);
 			if m:
 				format = int(m.group(1))
 		# default values

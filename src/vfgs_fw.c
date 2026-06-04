@@ -3,7 +3,7 @@
  * and contributor rights, including patent rights, and no such rights are
  * granted under this license.
  *
- * Copyright (c) 2022-2023, InterDigital
+ * Copyright (c) 2022-2026, InterDigital
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -280,6 +280,8 @@ static const uint32 Seed_LUT[256] = {
 static const int8 DCT2_64[64][64] = \
   DEFINE_DCT2_P64_MATRIX(64, 83, 36, 89, 75, 50, 18, 90, 87, 80, 70, 57, 43, 25, 9, 90, 90, 88, 85, 82, 78, 73, 67, 61, 54, 46, 38, 31, 22, 13, 4, 91, 90, 90, 90, 88, 87, 86, 84, 83, 81, 79, 77, 73, 71, 69, 65, 62, 59, 56, 52, 48, 44, 41, 37, 33, 28, 24, 20, 15, 11, 7, 2);
 
+uint8 window[16][64];
+
 /** Pseudo-random number generator (32-bit) */
 static uint32 prng(uint32 x)
 {
@@ -294,7 +296,7 @@ static uint32 prng(uint32 x)
 }
 
 /** Apply iDCT2 to block B[64][64] + clipping */
-static void idct2_64(int8 B[][64])
+static void idct2_64(int8 B[][64], int fh, int fv)
 {
 	int16 X[64][64];
 	int i,j,k;
@@ -304,22 +306,22 @@ static void idct2_64(int8 B[][64])
 	for (j=0; j<64; j++)
 		for (i=0; i<64; i++)
 		{
-			acc = 256;
+			acc = 256*128;
 			for (k=0; k<64; k++)
-				acc += (int32)DCT2_64[k][j] * B[k][i]; // iDCT bases are vertical (transpose of DCT2_64)
+				acc += (int32)DCT2_64[k][j] * B[k][i] * window[fv][k]; // iDCT bases are vertical (transpose of DCT2_64)
 
-			X[j][i] = (acc >> 9);
+			X[j][i] = (acc >> 9+7);
 		}
 
 	/* 2nd pass (...)*DCT2_64 = horizontal + clipping */
 	for (j=0; j<64; j++)
 		for (i=0; i<64; i++)
 		{
-			acc = 256;
+			acc = 256*128;
 			for (k=0; k<64; k++)
-				acc += (int32)X[j][k] * DCT2_64[k][i];
+				acc += (int32)X[j][k] * DCT2_64[k][i] * window[fh][k];
 
-			acc >>= 9;
+			acc >>= 9+7;
 			if (acc >  127) acc = 127;
 			if (acc < -127) acc = -127;
 			B[j][i] = acc;
@@ -327,7 +329,7 @@ static void idct2_64(int8 B[][64])
 }
 
 /** Apply iDCT2 to block B[32][32] + clipping */
-static void idct2_32(int8 B[][32])
+static void idct2_32(int8 B[][32], int fh, int fv)
 {
 	int16 X[32][32];
 	int i,j,k;
@@ -337,22 +339,22 @@ static void idct2_32(int8 B[][32])
 	for (j=0; j<32; j++)
 		for (i=0; i<32; i++)
 		{
-			acc = 128;
+			acc = 128*128;
 			for (k=0; k<32; k++)
-				acc += (int32)DCT2_64[k*2][j] * B[k][i]; // iDCT bases are vertical (transpose of DCT2_64=DCT)
+				acc += (int32)DCT2_64[k*2][j] * B[k][i] * window[fv][k*2]; // iDCT bases are vertical (transpose of DCT2_64=DCT)
 
-			X[j][i] = (acc >> 8);
+			X[j][i] = (acc >> 8+7);
 		}
 
 	/* 2nd pass (...)*R32 = horizontal + clipping */
 	for (j=0; j<32; j++)
 		for (i=0; i<32; i++)
 		{
-			acc = 256;
+			acc = 256*128;
 			for (k=0; k<32; k++)
-				acc += (int32)X[j][k] * DCT2_64[k*2][i];
+				acc += (int32)X[j][k] * DCT2_64[k*2][i] * window[fh][k*2];
 
-			acc >>= 9;
+			acc >>= 9+7;
 			if (acc >  127) acc = 127;
 			if (acc < -127) acc = -127;
 			B[j][i] = acc;
@@ -363,48 +365,36 @@ static void vfgs_make_sei_ff_pattern64(int8 B[][64], int fh, int fv)
 {
 	int k, l;
 	uint32 n;
-	fh = 4*(fh+1);
-	fv = 4*(fv+1);
 
 	n = Seed_LUT[0];
-	memset(B, 0, 64*64*sizeof(int8));
 	for (l=0; l<64; l++)
 		for (k=0; k<64; k+=4)
 		{
-			if (k<fh && l<fv)
-			{
-				B[l][k+0] = Gaussian_LUT[(n+0)&2047];
-				B[l][k+1] = Gaussian_LUT[(n+1)&2047];
-				B[l][k+2] = Gaussian_LUT[(n+2)&2047];
-				B[l][k+3] = Gaussian_LUT[(n+3)&2047];
-			}
+			B[l][k+0] = Gaussian_LUT[(n+0)&2047];
+			B[l][k+1] = Gaussian_LUT[(n+1)&2047];
+			B[l][k+2] = Gaussian_LUT[(n+2)&2047];
+			B[l][k+3] = Gaussian_LUT[(n+3)&2047];
 			n = prng(n);
 		}
 	B[0][0] = 0;
-	idct2_64(B);
+	idct2_64(B, fh, fv);
 }
 
 static void vfgs_make_sei_ff_pattern32(int8 B[][32], int fh, int fv)
 {
 	int k, l;
 	uint32 n;
-	fh = 2*(fh+1);
-	fv = 2*(fv+1);
 
 	n = Seed_LUT[1];
-	memset(B, 0, 32*32*sizeof(int8));
 	for (l=0; l<32; l++)
 		for (k=0; k<32; k+=2)
 		{
-			if (k<fh && l<fv)
-			{
-				B[l][k+0] = Gaussian_LUT[(n+0)&2047];
-				B[l][k+1] = Gaussian_LUT[(n+1)&2047];
-			}
+			B[l][k+0] = Gaussian_LUT[(n+0)&2047];
+			B[l][k+1] = Gaussian_LUT[(n+1)&2047];
 			n = prng(n);
 		}
 	B[0][0] = 0;
-	idct2_32(B);
+	idct2_32(B, fh, fv);
 }
 
 static void vfgs_make_ar_pattern(const int8* buf0, int8 buf[], int8 P[], int size, const int16 ar_coef[], int nb_coef, int shift, int scale, uint32 seed)
@@ -641,6 +631,58 @@ void vfgs_init_sei(fgs_sei* cfg)
 	}
 
 	vfgs_set_scale_shift(cfg->log2_scale_factor - (cfg->model_id ? 1 : 0)); // -1 for grain shift in pattern generation (see above)
+}
+
+/* ****************************************************************************/
+
+#undef round
+#include <math.h>
+#define PI 3.14159265358979323846
+
+/** Initialize frequency shaping window */
+void vfgs_init_window(float K)
+{
+	float nrj[64];
+	float a;
+	int i, k;
+
+	// energy table (cumulative average of squares: integral divided by interval)
+	for (i=0; i<64; i++)
+	{
+		float t = (float)i/64;
+		nrj[i] = t ? K*K/2*(1+sin(PI*t)/(PI*t)) : K*K;
+	}
+
+	// compute window for each frequency cutoff
+	for (k=0; k<16; k++)
+	{
+		float fc = (k + 1.0)/16;
+
+		if (K<1) // rectangular window
+		{
+			for (i=0; i<64; i++)
+				window[k][i] = (i<(k+1)*4) ? 128 : 0;
+		}
+		else // cosine window
+		{
+			if (fc <= K*K/2)
+				a = K*K/(2*fc);
+			else
+			{
+				// search nrj for fc
+				for (i=0; i<64; i++)
+					if (nrj[i] <= fc)
+						break;
+				// interpolate
+				a = ((fc - nrj[i-1])/(nrj[i] - nrj[i-1]) + i-1)/64;
+			}
+			for (i=0; i<64; i++)
+			{
+				float f = ((float)i+0.5)/64;
+				window[k][i] = (a*f < 1) ? round(K*cos(PI*a*f/2)*128) : 0;
+			}
+		}
+	}
 }
 
 /* ****************************************************************************/

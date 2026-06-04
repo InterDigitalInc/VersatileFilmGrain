@@ -3,7 +3,7 @@
  * and contributor rights, including patent rights, and no such rights are
  * granted under this license.
  *
- * Copyright (c) 2022-2023, InterDigital
+ * Copyright (c) 2022-2026, InterDigital
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -688,6 +688,7 @@ int main(int argc, const char **argv)
 	yuv frame, oframe;
 	unsigned gain = 100;
 	unsigned seed = 0;
+	float K = 1.118;
 
 	// Parse parameters
 	for (i=1; i<argc && !err; i++)
@@ -703,6 +704,7 @@ int main(int argc, const char **argv)
 		else if (!strcasecmp(param, "-r") || !strcasecmp(param, "--seed"))        { if (i+1 < argc) seed   = atoi(argv[++i]); else err = 1; }
 		else if (!strcasecmp(param, "-c") || !strcasecmp(param, "--cfg"))         { if (i+1 < argc) err = push_cfg(argv[++i]); else err = 1; }
 		else if (!strcasecmp(param, "-g") || !strcasecmp(param, "--gain"))        { if (i+1 < argc) gain   = atoi(argv[++i]); else err = 1; }
+		else if (!strcasecmp(param, "-k") || !strcasecmp(param, "--soft"))        { if (i+1 < argc) K      = atof(argv[++i]); else err = 1; }
 		else if (!strcasecmp(param, "-h") || !strcasecmp(param, "--help"))        { help(argv[0]); return 1; }
 		else if (param[0]!='-')
 		{
@@ -752,6 +754,7 @@ int main(int argc, const char **argv)
 	adjust_chroma_cfg();
 	apply_gain(gain);
 
+	vfgs_init_window(K);
 	if (afgs1.num_y_points)
 		vfgs_init_afgs1(&afgs1);
 	else
